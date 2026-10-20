@@ -12,6 +12,8 @@
 # D3DDevice_Present, D3DDevice_GetBackBuffer and D3DDevice_GetDepthStencilSurface are not from the seed: 3925 has
 # them where 5558 and 5849 have Swap, GetBackBuffer2 and GetDepthStencilSurface2. Their rows have no len, k or
 # xtlid, so the scan never matches them and the config gives their addresses by hand.
+# IDirectSound_GetCaps, IDirectSound_SetAllParameters and IDirectSoundBuffer_SetNotificationPositions are the
+# same for DSOUND: 3925-only rows in the hand-added form below, proven in docs/dsound-3925-gaps.md.
 
 [symbols]
 _CIacos = {sec = ".text", ret = 0, regs = []}
@@ -173,10 +175,12 @@ IDirectSound_CommitEffectData = {xtlid = 0xB0038}
 IDirectSound_CreateSoundBuffer = {sec = "DSOUND", xtlid = 0xB003A, ret = 16, regs = []}
 IDirectSound_DownloadEffectsImage = {xtlid = 0xB003C}
 IDirectSound_EnableHeadphones = {sec = "DSOUND", xtlid = 0xB003D, ret = 8, regs = []}
+IDirectSound_GetCaps = {sec = "DSOUND", ret = 8, regs = []}
 IDirectSound_GetEffectData = {xtlid = 0xB003F}
 IDirectSound_GetOutputLevels = {xtlid = 0xB0040}
 IDirectSound_GetSpeakerConfig = {sec = "DSOUND", xtlid = 0xB0041, ret = 8, regs = []}
 IDirectSound_Release = {sec = "DSOUND", xtlid = 0xB0045, ret = 4, regs = []}
+IDirectSound_SetAllParameters = {sec = "DSOUND", ret = 12, regs = []}
 IDirectSound_SetDistanceFactor = {sec = "DSOUND", xtlid = 0xB0048, ret = 12, regs = []}
 IDirectSound_SetDopplerFactor = {sec = "DSOUND", xtlid = 0xB0049, ret = 12, regs = []}
 IDirectSound_SetEffectData = {sec = "DSOUND", xtlid = 0xB004A, ret = 24, regs = []}
@@ -207,6 +211,7 @@ IDirectSoundBuffer_SetMaxDistance = {sec = "DSOUND", xtlid = 0xB006F, ret = 12, 
 IDirectSoundBuffer_SetMinDistance = {sec = "DSOUND", xtlid = 0xB0070, ret = 12, regs = []}
 IDirectSoundBuffer_SetMixBins = {sec = "DSOUND", xtlid = 0xB0071, ret = 8, regs = []}
 IDirectSoundBuffer_SetMixBinVolumes = {sec = "DSOUND", xtlid = 0xB0072, ret = 8, regs = []}
+IDirectSoundBuffer_SetNotificationPositions = {sec = "DSOUND", ret = 12, regs = []}
 IDirectSoundBuffer_SetOutputBuffer = {xtlid = 0xB0075}
 IDirectSoundBuffer_SetPlayRegion = {xtlid = 0xB0077}
 IDirectSoundBuffer_SetPosition = {sec = "DSOUND", xtlid = 0xB0078, ret = 20, regs = []}

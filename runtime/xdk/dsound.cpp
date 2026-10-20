@@ -80,6 +80,18 @@ X86Func* Find(uint32_t guest);
 #define SYM_IDirectSoundBuffer_PlayEx FFFFFF0D
 #define HAS_IDirectSoundBuffer_PlayEx 0
 #endif
+#ifndef SYM_IDirectSound_GetCaps
+#define SYM_IDirectSound_GetCaps FFFFFF0E
+#define HAS_IDirectSound_GetCaps 0
+#endif
+#ifndef SYM_IDirectSound_SetAllParameters
+#define SYM_IDirectSound_SetAllParameters FFFFFF0F
+#define HAS_IDirectSound_SetAllParameters 0
+#endif
+#ifndef SYM_IDirectSoundBuffer_SetNotificationPositions
+#define SYM_IDirectSoundBuffer_SetNotificationPositions FFFFFF10
+#define HAS_IDirectSoundBuffer_SetNotificationPositions 0
+#endif
 namespace {
 
 constexpr uint32_t kStreamVtable = SYM(DSound_StreamVtable);  // CDirectSoundStream XMediaObject vtable
@@ -117,6 +129,7 @@ struct Voice {
     std::vector<float> curve;  // rolloff
     bool is3d = false;
     uint32_t mode = 0;  // DS3DMODE: 1 head relative, 2 disabled
+    std::vector<std::pair<uint32_t, uint32_t>> notify;  // (byte offset in the play region, event handle)
     float p[3] = {}, min_dist = 1, max_dist = 1e9f;
     // ADPCM block cache
     int64_t block = -1;
@@ -273,6 +286,7 @@ void Render(float* out, uint32_t frames) {
         float g[2][2];
         Levels(v, g);
         uint32_t base = v.data + v.play_start;
+        uint32_t notify_before = BytesOf(v, uint32_t(v.pos));
         double step = double(v.freq ? v.freq : v.rate) / audio::kRate;
         for (uint32_t i = 0; i < frames; i++) {
             uint32_t f = uint32_t(v.pos);
@@ -329,6 +343,18 @@ void Render(float* out, uint32_t frames) {
             out[i * 2] += a * g[0][0] + b * g[1][0];
             out[i * 2 + 1] += a * g[0][1] + b * g[1][1];
             v.pos += step;
+        }
+        // buffer notifications: the play cursor passed the offset, so the event is set
+        if (!v.stream && v.playing && !v.notify.empty()) {
+            uint32_t after = BytesOf(v, uint32_t(v.pos));
+            for (auto& [off, ev] : v.notify) {
+                if (off == 0xFFFFFFFFu || !ev) continue;  // DSBPN_OFFSETSTOP is not reproduced
+                bool crossed = after >= notify_before ? (off > notify_before && off <= after)
+                                                       : (off > notify_before || off <= after);
+                if (crossed) {
+                    if (ObjectRef e = FromHandle(ev)) SetEvent(*e);
+                }
+            }
         }
     }
     for (uint32_t i = 0; i < frames * 2; i++) out[i] = std::clamp(out[i], -1.0f, 1.0f);
@@ -456,7 +482,8 @@ float F32(uint32_t v) {
 static void AuditExports() {
     static const uint32_t handled[] = {
         SYM(DirectSoundCreate), SYM(IDirectSound_Release), SYM(DirectSoundUseFullHRTF), SYM(DirectSoundUseLightHRTF),
-        SYM(IDirectSound_GetSpeakerConfig),
+        SYM(IDirectSound_GetSpeakerConfig), SYM(IDirectSound_GetCaps), SYM(IDirectSound_SetAllParameters),
+        SYM(IDirectSoundBuffer_SetNotificationPositions),
         SYM(IDirectSound_SetEffectData), SYM(IDirectSound_EnableHeadphones), SYM(IDirectSound_SetMixBinHeadroom),
         SYM(IDirectSound_CommitDeferredSettings), SYM(IDirectSound_SetDopplerFactor), SYM(IDirectSound_SetRolloffFactor),
         SYM(IDirectSound_SetDistanceFactor), SYM(IDirectSound_SetVelocity), SYM(IDirectSound_SetI3DL2Listener),
@@ -519,6 +546,19 @@ HLE_STDCALL(IDirectSound_GetSpeakerConfig, 2) {
     W32(a[1], 0);  // DSSPEAKER_STEREO
     return 0;
 }
+// (this, DSCAPS out): four dwords, no dwSize. The 3925 body overwrites the first dword with the free
+// 2D voice count; the title passes an uninitialised 16-byte buffer and only logs the values. The
+// counts are the MCPX ones the guest APU starts with (192 2D and 64 3D voices); the SGE count has
+// no writer in this image and the host keeps no allocation counter, so both read as zero.
+HLE_STDCALL(IDirectSound_GetCaps, 2) {
+    if (a[1]) {
+        W32(a[1], 192);
+        W32(a[1] + 4, 64);
+        W32(a[1] + 8, 0);
+        W32(a[1] + 12, 0);
+    }
+    return 0;
+}
 HLE_STDCALL(IDirectSound_SetEffectData, 6) { return 0; }
 HLE_STDCALL(IDirectSound_EnableHeadphones, 2) { return 0; }
 HLE_STDCALL(IDirectSound_SetMixBinHeadroom, 3) { return 0; }
@@ -538,6 +578,19 @@ HLE_STDCALL(IDirectSound_SetOrientation, 8) {
     for (int i = 0; i < 3; i++) {
         g_front[i] = F32(a[1 + i]);
         g_top[i] = F32(a[4 + i]);
+    }
+    return 0;
+}
+// (this, DS3DLISTENER, apply): position at +4, orientation front at +0x1C and top at +0x28. The
+// factors at +0x34..+0x3C are kept nowhere, as in the single setters; velocity is likewise unused.
+HLE_STDCALL(IDirectSound_SetAllParameters, 3) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    if (a[1]) {
+        for (int i = 0; i < 3; i++) {
+            g_listener[i] = F32(R32(a[1] + 4 + i * 4));
+            g_front[i] = F32(R32(a[1] + 0x1C + i * 4));
+            g_top[i] = F32(R32(a[1] + 0x28 + i * 4));
+        }
     }
     return 0;
 }
@@ -707,6 +760,14 @@ BUFFER(SetLoopRegion, 3) {
     if (a[1] > v.play_len || a[2] > v.play_len - a[1]) return 0x88780032u;
     v.loop_start = a[1];
     v.loop_len = a[2] ? a[2] : v.play_len - a[1];
+    return 0;
+}
+// (this, count, DSBPOSITIONNOTIFY[]): 8-byte entries of (offset, event). The mixer sets each
+// event as the play cursor passes its offset; see Render.
+BUFFER(SetNotificationPositions, 3) {
+    v.notify.clear();
+    for (uint32_t i = 0; a[2] && i < std::min<uint32_t>(a[1], 64); i++)
+        v.notify.emplace_back(R32(a[2] + i * 8), R32(a[2] + i * 8 + 4));
     return 0;
 }
 BUFFER(GetStatus, 2) {
