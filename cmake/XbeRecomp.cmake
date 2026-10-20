@@ -13,13 +13,21 @@ file(WRITE ${CMAKE_BINARY_DIR}/sdk_dir.txt "${XBE_SDK_DIR_NATIVE}\n")
 # compare cost several times what its byte count predicts. NDEBUG is deliberately left undefined -
 # the log's verbose mode keys off it (core/log.cpp), and dropping to the release log format is a
 # separate decision from optimising.
+#
+# Targeting Linux, clang does get CMake's own defaults, and those carry -DNDEBUG. That made the
+# same Release build quiet on Linux and verbose on Windows: logs/<game>.log held the boot preamble
+# and nothing after it, no rotation into <game>_001.log, and XBE_PERF / the present geometry lines
+# the docs tell people to read produced nothing at all. The flags are stripped of NDEBUG here so
+# one Release preset means one thing on both platforms.
 foreach(cfg RELEASE RELWITHDEBINFO)
-    if(NOT CMAKE_C_FLAGS_${cfg} MATCHES "[-/]O")
-        set(CMAKE_C_FLAGS_${cfg} "${CMAKE_C_FLAGS_${cfg}} -O2" CACHE STRING "" FORCE)
-    endif()
-    if(NOT CMAKE_CXX_FLAGS_${cfg} MATCHES "[-/]O")
-        set(CMAKE_CXX_FLAGS_${cfg} "${CMAKE_CXX_FLAGS_${cfg}} -O2" CACHE STRING "" FORCE)
-    endif()
+    foreach(lang C CXX)
+        if(NOT CMAKE_${lang}_FLAGS_${cfg} MATCHES "[-/]O")
+            set(CMAKE_${lang}_FLAGS_${cfg} "${CMAKE_${lang}_FLAGS_${cfg}} -O2")
+        endif()
+        string(REGEX REPLACE "[-/]D[ \t]*NDEBUG" "" stripped "${CMAKE_${lang}_FLAGS_${cfg}}")
+        string(STRIP "${stripped}" stripped)
+        set(CMAKE_${lang}_FLAGS_${cfg} "${stripped}" CACHE STRING "" FORCE)
+    endforeach()
 endforeach()
 include(FetchContent)
 set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
