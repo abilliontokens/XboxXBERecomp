@@ -787,7 +787,19 @@ HLE_STDCALL(D3D_MakeRequestedSpace, 2) {
 }
 
 HLE_STDCALL(D3DDevice_BlockUntilVerticalBlank, 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    // Wait for the blank the title is actually counting, not a fixed sleep. 16 ms is neither the
+    // 16.667 ms period nor in phase with it, so a frame that finished just after one blank waited
+    // past the next and the title locked to half the refresh.
+    if (!kVBlank) {
+        std::this_thread::sleep_for(std::chrono::microseconds(16667));
+        return 0;
+    }
+    const uint32_t start = Dev(XDK_CDevice_VBlankCount);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(34);
+    while (Dev(XDK_CDevice_VBlankCount) == start) {
+        if (std::chrono::steady_clock::now() >= deadline) break;  // the thread is not running: never hang
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
     return 0;
 }
 HLE_STDCALL(D3DDevice_SetFlickerFilter, 1) { return 0; }

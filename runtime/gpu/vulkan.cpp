@@ -396,7 +396,7 @@ private:
     void LogDraw(const State& s, uint32_t prim, uint32_t count, const Assembled& a, const DrawShaders& sh, const DrawTextures& stages,
                  const DrawConstants& c, GuestExtent size);
     void BeginTargetPass(Target* rt, Target* ds, VkFramebuffer& fbOut);
-    void EndPass();
+    void FlushPass();
     void PrepareBlitSource(ImageRes& src, bool gamma);
     void BlitInto(Target& dst, ImageRes& src, const float uv[4], bool gamma, bool alpha, uint32_t taps, float mul, bool over);
     void BlitToImage(VkFormat rtvFormat, uint32_t w, uint32_t h, ImageRes& src, const float uv[4],
@@ -441,6 +441,37 @@ private:
     Frame frames_[kFrames];
     uint64_t frame_ = 0, presents_ = 0;
     bool recording_ = false; uint64_t segmentGen_ = 0;  // bumped every time EnsureRecording opens a segment
+    // The open render pass. BeginTargetPass leaves it open and reuses it for the next draw on the same
+    // attachments; FlushPass ends it, and every command that may not be recorded inside a render pass
+    // calls FlushPass first. Beginning one per draw - with the framebuffer each needs - cost 8 ms a
+    // frame of the arena's 13,000 draws.
+    bool passOpen_ = false; Target* passRt_ = nullptr; Target* passDs_ = nullptr; VkFramebuffer passFb_ = VK_NULL_HANDLE;
+    // The constants and descriptor set the last draw of this segment used. The arena submits thousands
+    // of draws of about five vertices each, and long runs of them belong to one object, so they repeat
+    // the same 3 KB constant block, the same per draw constants and the same textures. Re-uploading and
+    // re-allocating a set for every one cost 10 ms a frame. EnsureRecording clears these: an allocation
+    // is only valid in the segment that records its use.
+    std::array<std::array<float, 4>, 192> vscLast_{}; Alloc vscAlloc_{}; bool vscValid_ = false;
+    DrawConstants dcLast_{}; Alloc dcAlloc_{}; bool dcValid_ = false;
+    std::array<VkImageView, 4> viewLast_{}; std::array<VkSampler, 4> samplerLast_{};
+    VkDescriptorSet setLast_ = VK_NULL_HANDLE; bool setValid_ = false;
+    // What is already bound in the open command buffer. Vulkan keeps a binding until something
+    // replaces it, and consecutive draws of one object repeat all of it, so re-recording each bind
+    // per draw is pure cost. InvalidateBinds forgets it: a reset command buffer holds no bindings,
+    // and the blit and depth-copy paths bind their own pipeline, set, viewport and scissor.
+    VkPipeline boundPipeline_ = VK_NULL_HANDLE;
+    VkDescriptorSet boundSet_ = VK_NULL_HANDLE;
+    float boundBlend_[4] = {-1, -1, -1, -1};
+    VkViewport boundViewport_{}; VkRect2D boundScissor_{}; bool boundVpValid_ = false, boundScValid_ = false;
+    // The geometry the last draw uploaded. The arena's draws are a few vertices each and runs of them
+    // repeat one buffer, so re-uploading and re-binding it per draw cost 5 ms a frame.
+    struct VbCache { const void* src = nullptr; uint32_t bytes = 0; Alloc alloc{}; };
+    std::array<VbCache, 16> vbLast_{}; uint32_t vbCount_ = 0; bool vbValid_ = false;
+    void InvalidateBinds() {
+        boundPipeline_ = VK_NULL_HANDLE; boundSet_ = VK_NULL_HANDLE;
+        boundBlend_[0] = boundBlend_[1] = boundBlend_[2] = boundBlend_[3] = -1;
+        boundVpValid_ = boundScValid_ = false; vbValid_ = false;
+    }
     // D2: submissions successfully queued, published by Submit (render thread) after
     // vkQueueSubmit and read by DeliverLate (title thread). This atomic counter, plus
     // the VkFence each Late slot resolved at record time, replaces the old submitFences_
@@ -620,6 +651,7 @@ void VulkanBackend::DestroyImage(ImageRes& r) {
 void VulkanBackend::DeferDestroyImage(ImageRes r) { if (r.image) Cur().garbage.push_back([this, r]() mutable { DestroyImage(r); }); }
 void VulkanBackend::TransitionRaw(VkImage image, VkImageLayout& cur, VkImageLayout want, VkImageAspectFlags aspect) {
     if (cur == want) return;
+    FlushPass();  // a barrier may not be recorded inside a render pass
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.oldLayout = cur; b.newLayout = want; b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.image = image; b.subresourceRange.aspectMask = aspect;
@@ -679,6 +711,9 @@ void VulkanBackend::EnsureRecording() {
     Frame& f = Cur();
     if (f.fencePending) WaitFrame(f);
     vkResetCommandBuffer(f.cmd, 0); vkResetDescriptorPool(device_, f.pool, 0); f.used = 0; f.sets = 0; f.gen = ++segmentGen_; f.uploadFlushMems.clear();
+    passOpen_ = false;  // the reset command buffer holds no pass
+    vscValid_ = dcValid_ = setValid_ = false;  // and none of the last segment's allocations
+    InvalidateBinds();                         // nor any of its bindings
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(f.cmd, &bi); recording_ = true;
 }
@@ -718,6 +753,7 @@ void VulkanBackend::DiscardRecordedLate() {
 }
 void VulkanBackend::Submit(bool wait, VkSemaphore waitSem, VkSemaphore signalSem) {
     if (!recording_) { if (wait && device_) vkQueueWaitIdle(queue_); return; }
+    FlushPass();  // a segment may not end inside a render pass
     Frame& f = Cur();
     // D7: every result is checked. On any failure the fence is left not pending and
     // submitCounter_ does not advance, so the next WaitFrame cannot block forever
@@ -1541,6 +1577,8 @@ VkDescriptorSet VulkanBackend::AllocDrawSet(VkBuffer vcBuf, uint64_t vcOff, VkBu
     vkUpdateDescriptorSets(device_, 10, w, 0, nullptr); return set;
 }
 void VulkanBackend::BeginTargetPass(Target* rt, Target* ds, VkFramebuffer& fbOut) {
+    if (passOpen_ && passRt_ == rt && passDs_ == ds) { fbOut = passFb_; return; }  // already drawing there
+    FlushPass();
     VkRenderPass rp = RenderPassFor(rt ? kBgra : VK_FORMAT_UNDEFINED, depthFormat_, rt != nullptr, ds != nullptr);
     if (rt) Transition(rt->res, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     if (ds) Transition(ds->res, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
@@ -1555,12 +1593,17 @@ void VulkanBackend::BeginTargetPass(Target* rt, Target* ds, VkFramebuffer& fbOut
     VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     bi.renderPass = rp; bi.framebuffer = fbOut; bi.renderArea = {{0, 0}, {w, h}};
     vkCmdBeginRenderPass(Cmd(), &bi, VK_SUBPASS_CONTENTS_INLINE);
+    passOpen_ = true; passRt_ = rt; passDs_ = ds; passFb_ = fbOut;
 }
-void VulkanBackend::EndPass() { vkCmdEndRenderPass(Cmd()); }
+void VulkanBackend::FlushPass() {
+    if (!passOpen_) return;
+    passOpen_ = false;
+    vkCmdEndRenderPass(Cmd());
+}
 void VulkanBackend::SetViewportScissor(const State& s, GuestExtent size, uint32_t targetW, uint32_t targetH) {
     float W = float(targetW), H = float(targetH);
     VkViewport vp{0, H, W, -H, 0, 1};  // negative height: shaders emit D3D clip space
-    vkCmdSetViewport(Cmd(), 0, 1, &vp);
+    if (!boundVpValid_ || std::memcmp(&boundViewport_, &vp, sizeof(vp)) != 0) { vkCmdSetViewport(Cmd(), 0, 1, &vp); boundViewport_ = vp; boundVpValid_ = true; }
     float sc = W / size.w;
     int32_t x0 = int32_t((s.viewport.x + size.dx) * sc), y0 = int32_t(s.viewport.y * sc);
     int32_t x1 = int32_t((s.viewport.x + s.viewport.w + size.dx) * sc), y1 = int32_t((s.viewport.y + s.viewport.h) * sc);
@@ -1569,15 +1612,25 @@ void VulkanBackend::SetViewportScissor(const State& s, GuestExtent size, uint32_
     int32_t cx0 = std::clamp<int32_t>(x0, 0, int32_t(W)), cy0 = std::clamp<int32_t>(y0, 0, int32_t(H));
     int32_t cx1 = std::clamp<int32_t>(x1, 0, int32_t(W)), cy1 = std::clamp<int32_t>(y1, 0, int32_t(H));
     VkRect2D rect{{cx0, cy0}, {uint32_t(std::max(0, cx1 - cx0)), uint32_t(std::max(0, cy1 - cy0))}};
-    vkCmdSetScissor(Cmd(), 0, 1, &rect);
+    if (!boundScValid_ || std::memcmp(&boundScissor_, &rect, sizeof(rect)) != 0) { vkCmdSetScissor(Cmd(), 0, 1, &rect); boundScissor_ = rect; boundScValid_ = true; }
 }
 void VulkanBackend::DrawGeometry(const Assembled& a) {
-    VkBuffer bufs[16]; VkDeviceSize offs[16]{};
-    for (uint32_t i = 0; i < a.buffer_count; i++) {
-        Alloc vb = UploadAlloc(a.buffers[i].bytes, 16); if (!vb.cpu) return;
-        std::memcpy(vb.cpu, a.buffers[i].src, a.buffers[i].bytes); bufs[i] = vb.buffer; offs[i] = vb.off;
+    // Runs of draws share one buffer: when every binding is the same bytes from the same source as the
+    // last draw's, its upload is still live in this segment and still bound, so neither is repeated.
+    bool sameVb = vbValid_ && vbCount_ == a.buffer_count;
+    for (uint32_t i = 0; sameVb && i < a.buffer_count; i++)
+        sameVb = vbLast_[i].src == a.buffers[i].src && vbLast_[i].bytes == a.buffers[i].bytes &&
+                 std::memcmp(vbLast_[i].alloc.cpu, a.buffers[i].src, a.buffers[i].bytes) == 0;
+    if (!sameVb) {
+        VkBuffer bufs[16]; VkDeviceSize offs[16]{};
+        for (uint32_t i = 0; i < a.buffer_count; i++) {
+            Alloc vb = UploadAlloc(a.buffers[i].bytes, 16); if (!vb.cpu) { vbValid_ = false; return; }
+            std::memcpy(vb.cpu, a.buffers[i].src, a.buffers[i].bytes); bufs[i] = vb.buffer; offs[i] = vb.off;
+            vbLast_[i] = {a.buffers[i].src, a.buffers[i].bytes, vb};
+        }
+        if (a.buffer_count) vkCmdBindVertexBuffers(Cmd(), 0, a.buffer_count, bufs, offs);
+        vbCount_ = a.buffer_count; vbValid_ = true;
     }
-    if (a.buffer_count) vkCmdBindVertexBuffers(Cmd(), 0, a.buffer_count, bufs, offs);
     if (a.index_count) {
         uint32_t ibytes = a.index_count * (a.index16 ? 2 : 4);
         Alloc ib = UploadAlloc(ibytes, 4); if (!ib.cpu) return;
@@ -1811,26 +1864,52 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     PixelKey pk = MakePixelKey(s, stages.info); pk.quad = sh.quad; sh.pkey = Hash(&pk, sizeof(pk)); EnsurePixelShader(pk, sh);
     if (!sh.vs || !sh.ps) { g_vkPerf.skipped++; g_vkPerf.nopipeline++; g_vkPerf.nopipeShader++; LOG_FIRST(16, "vulkan: draw skipped, no shader: rt %08X", s.rt.data); return; }
     PsoKey k; BuildPsoKey(s, a, sh.vh, sh.ph, boundRt_, boundDs_, k);
-    VkPipeline pso = EnsurePipeline(k, sh.vs, sh.ps); if (!pso) { g_vkPerf.skipped++; g_vkPerf.nopipeline++; g_vkPerf.nopipePso++; LOG_FIRST(16, "vulkan: draw skipped, no pipeline: rt %08X vs %llx ps %llx", s.rt.data, (unsigned long long)sh.vh, (unsigned long long)sh.ph); return; }
+    VkPipeline pso = EnsurePipeline(k, sh.vs, sh.ps);
+    if (!pso) { g_vkPerf.skipped++; g_vkPerf.nopipeline++; g_vkPerf.nopipePso++; LOG_FIRST(16, "vulkan: draw skipped, no pipeline: rt %08X vs %llx ps %llx", s.rt.data, (unsigned long long)sh.vh, (unsigned long long)sh.ph); return; }
     GuestExtent size = BoundExtent(boundRt_ ? s.rt : s.zs);
     DrawConstants c{}; FillUvRect(s, prim, count, a, sh, stages, c); FillConstants(s, sh, stages, size, c);
     static const bool debugDraw = std::getenv("XBE_VK_DEBUG_DRAW") != nullptr;
     if (debugDraw && presents_ % 60 == 0) LogDraw(s, prim, count, a, sh, stages, c, size);
+    Alloc vc, dc;
+    bool sameVsc, sameDc;
     EnsureSetRoom();  // before the constants: a flush here restarts the upload ring
-    Alloc vc = UploadAlloc(sizeof(s.vsc), 256); Alloc dc = UploadAlloc(sizeof(DrawConstants), 256);
-    if (!vc.cpu || !dc.cpu) { g_vkPerf.skipped++; return; }
-    std::memcpy(vc.cpu, s.vsc.data(), sizeof(s.vsc)); std::memcpy(dc.cpu, &c, sizeof(c));
+    sameVsc = vscValid_ && std::memcmp(vscLast_.data(), s.vsc.data(), sizeof(s.vsc)) == 0;
+    if (sameVsc) vc = vscAlloc_;
+    else {
+        vc = UploadAlloc(sizeof(s.vsc), 256);
+        if (!vc.cpu) { g_vkPerf.skipped++; return; }
+        std::memcpy(vc.cpu, s.vsc.data(), sizeof(s.vsc));
+        std::memcpy(vscLast_.data(), s.vsc.data(), sizeof(s.vsc));
+        vscAlloc_ = vc; vscValid_ = true;
+    }
+    sameDc = dcValid_ && std::memcmp(&dcLast_, &c, sizeof(c)) == 0;
+    if (sameDc) dc = dcAlloc_;
+    else {
+        dc = UploadAlloc(sizeof(DrawConstants), 256);
+        if (!dc.cpu) { g_vkPerf.skipped++; return; }
+        std::memcpy(dc.cpu, &c, sizeof(c));
+        dcLast_ = c; dcAlloc_ = dc; dcValid_ = true;
+    }
     float bf[4]; ColorF(SimpleState(s, kMBlendColor), bf);
     std::array<VkSampler, 4> samplers; bool clampCoords = UnitTexcoordsOf(a);
     for (int i = 0; i < 4; i++) samplers[i] = StageSamplerFor(s, i, stages, clampCoords);
-    VkDescriptorSet set = AllocDrawSet(vc.buffer, vc.off, dc.buffer, dc.off, stages, samplers);
+    VkDescriptorSet set;
+    // Nothing the set describes changed, so the previous one still describes it.
+    bool same = setValid_ && sameVsc && sameDc && samplers == samplerLast_;
+    for (int i = 0; same && i < 4; i++) same = stages.view[i] == viewLast_[i];
+    if (same) set = setLast_;
+    else {
+        set = AllocDrawSet(vc.buffer, vc.off, dc.buffer, dc.off, stages, samplers);
+        for (int i = 0; i < 4; i++) viewLast_[i] = stages.view[i];
+        samplerLast_ = samplers; setLast_ = set; setValid_ = set != VK_NULL_HANDLE;
+    }
     if (!set) { g_vkPerf.skipped++; g_vkPerf.nopipeline++; g_vkPerf.nopipeSet++; LOG_FIRST(16, "vulkan: draw skipped, no descriptor set: rt %08X present %llu", s.rt.data, (unsigned long long)presents_); return; }
     VkFramebuffer fb; BeginTargetPass(boundRt_, boundDs_, fb);
-    vkCmdBindPipeline(Cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pso);
-    vkCmdBindDescriptorSets(Cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &set, 0, nullptr);
-    vkCmdSetBlendConstants(Cmd(), bf);
+    if (pso != boundPipeline_) { vkCmdBindPipeline(Cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pso); boundPipeline_ = pso; }
+    if (set != boundSet_) { vkCmdBindDescriptorSets(Cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &set, 0, nullptr); boundSet_ = set; }
+    if (std::memcmp(boundBlend_, bf, sizeof(bf)) != 0) { vkCmdSetBlendConstants(Cmd(), bf); std::memcpy(boundBlend_, bf, sizeof(bf)); }
     SetViewportScissor(s, size, boundRt_ ? boundRt_->w : boundDs_->w, boundRt_ ? boundRt_->h : boundDs_->h);
-    DrawGeometry(a); EndPass();
+    DrawGeometry(a);
     if (cap_) std::fprintf(cap_, "%04u draw rt %08X ds %08X prim %u count %u vs %08X\n", capI_++, s.rt.data, boundDs_ ? s.zs.data : 0, prim, count, s.vs_handle);
 }
 // ---- Clear ----
@@ -1871,7 +1950,7 @@ void VulkanBackend::Clear(const State& s, uint32_t count, const uint8_t* rects, 
             }
             vkCmdClearAttachments(Cmd(), 1, &a, uint32_t(vrs.size()), vrs.data());
         }
-        EndPass(); t->drawn = true;
+        t->drawn = true;
     }
 }
 // ---- pixel images, blits, shrink, read-back ----
@@ -1912,7 +1991,7 @@ void VulkanBackend::UploadTarget(Target& t, const Surface& s) {
         PrepareBlitSource(tex, false);
         VkFramebuffer fb; BeginTargetPass(&t, nullptr, fb);
         BlitToImage(kBgra, t.w, t.h, tex, uv, false, true, 1, 1.0f, over, &vp);
-        EndPass(); t.drawn = true; boundRt_ = boundDs_ = nullptr;
+        t.drawn = true; boundRt_ = boundDs_ = nullptr;
     } else BlitInto(t, tex, uv, false, true, 1, 1.0f, over);
     DeferDestroyImage(tex);
     t.epoch = DirtyEpoch(t.data); t.sig = MemSig(t.data, t.bytes);
@@ -1948,12 +2027,13 @@ void VulkanBackend::BlitToImage(VkFormat rtvFormat, uint32_t w, uint32_t h, Imag
         vkCmdSetViewport(Cmd(), 0, 1, &vp); VkRect2D sc{{0, 0}, {w, h}}; vkCmdSetScissor(Cmd(), 0, 1, &sc);
     } else { VkViewport vp{0, float(h), float(w), -float(h), 0, 1}; vkCmdSetViewport(Cmd(), 0, 1, &vp); VkRect2D sc{{0, 0}, {w, h}}; vkCmdSetScissor(Cmd(), 0, 1, &sc); }
     vkCmdDraw(Cmd(), 3, 1, 0, 0);
+    InvalidateBinds();
 }
 void VulkanBackend::BlitInto(Target& dst, ImageRes& src, const float uv[4], bool gamma, bool alpha, uint32_t taps, float mul, bool over) {
     PrepareBlitSource(src, gamma);
     VkFramebuffer fb; BeginTargetPass(&dst, nullptr, fb);
     BlitToImage(kBgra, dst.w, dst.h, src, uv, gamma, alpha, taps, mul, over, nullptr);
-    EndPass(); dst.drawn = true; boundRt_ = boundDs_ = nullptr;
+    dst.drawn = true; boundRt_ = boundDs_ = nullptr;
 }
 ImageRes VulkanBackend::ShrinkImage(ImageRes& src, uint32_t w, uint32_t h, uint32_t taps, float mul, ImageRes* reuse) {
     ImageRes down;
@@ -2062,7 +2142,6 @@ void VulkanBackend::Copy(const Surface& src, const Surface& dst, uint32_t count,
             PrepareBlitSource(srcT->res, false);
             VkFramebuffer fb; BeginTargetPass(dstT, nullptr, fb);
             BlitToImage(kBgra, dstT->w, dstT->h, srcT->res, uv, false, true, uint32_t(std::ceil(std::max(srcScale / dstScale, 1.0f) - 1e-3f)), 1.0f, false, &vp);
-            EndPass();
         }
     }
     dstT->drawn = true; boundRt_ = boundDs_ = nullptr;
@@ -2088,7 +2167,8 @@ bool VulkanBackend::DepthCopyDraw(const State& s) {
     vkCmdBindDescriptorSets(Cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &set, 0, nullptr);
     VkViewport vp{0, float(dst.h), float(dst.w), -float(dst.h), 0, 1}; vkCmdSetViewport(Cmd(), 0, 1, &vp);
     VkRect2D sc{{0, 0}, {dst.w, dst.h}}; vkCmdSetScissor(Cmd(), 0, 1, &sc);
-    vkCmdDraw(Cmd(), 3, 1, 0, 0); EndPass();
+    vkCmdDraw(Cmd(), 3, 1, 0, 0);
+    InvalidateBinds();
     dst.drawn = true; boundRt_ = boundDs_ = nullptr; return true;
 }
 // ---- Present ----
