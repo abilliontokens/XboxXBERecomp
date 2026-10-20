@@ -1,0 +1,68 @@
+# XDK 5233 library data layouts the runtime reads or writes. Each value is proven by this title's
+# default.xbe (The Sims, USA, 0x4541002F, sha1 40ab6f97e8ee3bf4102a5a7820dcb8047fc30097: D3D8, DSOUND and
+# XAPILIB all 5233) code at the address given, read from out/game.exe (xbe2pe.py flat PE, guest addresses
+# 1:1) beside the same function in The Sims: Bustin' Out (XDK 5558, sdk/xdk/5558/layout.toml). Device below
+# is the static device D3D__pDevice (0x19FA08) points at: D3D_Device 0x19FA10, which Direct3D_CreateDevice
+# 0x18F8B0 hands to its init (0x18F8EA..0x18F90A). Every key is proven; none is UNPROVEN. The evidence in full,
+# key by key, is in docs/layout-5233.md.
+#
+# 5233 is not 5558. Its CDevice is 0x2040 bytes (5558 0x24A0) and embeds its miniport at +0x17C8 (5558
+# +0x1C28), and 26 of the 31 CDevice offsets differ from 5558's: only Push, PushThreshold, BaseVertex, Flags
+# and Time agree. The fields from the miniport on keep 5558's distance from the miniport, so they sit 0x460
+# lower; the fields before it moved by varying amounts. The 14 other keys equal 5558's. Render and texture
+# stage states are numbered as 5849 numbers them (D3DDevice_SetRenderStateNotInline 0x18FCF0 splits at 5Ch
+# and 88h, D3D_RenderState holds 166 dwords up to D3D__pDevice), so this file carries no RenderState_ or
+# TextureState_ table.
+[layout]
+# D3D8 CDevice, the static device D3D__pDevice points at. Its miniport is embedded at +0x17C8 (0x1A11D8):
+# CDevice_Init 0x196590 does add esi, 17C8h at 0x196643 and calls the miniport init 0x19A93D with it at
+# 0x19664B; CDevice_KickOff 0x192760 reads the NV2A register base from [device + 0x17C8], the miniport's
+# field 0, at 0x192780. "miniport + N" below is device + 0x17C8 + N.
+CDevice_Push          = 0x0     # D3DDevice_SetTexture 0x1936F0 reads the push pointer [device] at 0x193742 and stores it back at 0x193766; D3DDevice_SetRenderState_Simple 0x18FCC0 advances [0x19FA10] (0x18FCD0)
+CDevice_PushThreshold = 0x4     # D3DDevice_SetTexture 0x193745: cmp eax, [ebp+4] with the push pointer, then calls D3DDevice_MakeSpace 0x192C20 (0x19374A); SetRenderState_Simple 0x18FCC8 compares with [0x19FA14]
+CDevice_BaseVertex    = 0x1C    # D3DDevice_DrawIndexedVertices 0x19510E: mov eax, [esi+1Ch], the base vertex the vertex array setup 0x199450 multiplies by each stride (0x1995A3); SetIndices is not linked
+CDevice_IndexBuffer   = 0x388   # CDevice_UnInit 0x196AF0 releases the resource at [device + 0x388] (0x196B6E), where 5558's 0x2505B0 releases its index buffer [device + 0x7A0] (0x25062A); SetIndices is not linked
+CDevice_ZScale        = 0x50C   # the viewport push helper 0x1908C0 multiplies viewport MinZ/MaxZ ([device + 0xAA0..]) by the float [device + 0x50C] (0x190A66, 0x190A78); SetRenderTarget's body 0x190EBD has 0x197850 store it
+CDevice_SuperSampleX  = 0x518   # the viewport push helper 0x1908C0 scales viewport X by the float [device + 0x518] (0x1909C1); SetRenderTarget's body 0x190BE0 stores it at 0x1910F1
+CDevice_SuperSampleY  = 0x51C   # the viewport push helper 0x1908C0 scales viewport Y by the float [device + 0x51C] (0x1909E3); SetRenderTarget's body 0x190BE0 stores it at 0x1910E9
+CDevice_Transforms    = 0x810   # D3DDevice_SetTransform 0x192D80: lea edi, [ecx + ebx + 810h] at 0x192D96 (ecx = type * 64), copies 16 dwords there
+CDevice_Textures      = 0xB38   # D3DDevice_SetTexture 0x193700 reads, 0x193739 stores [device + stage * 4 + 0xB38]
+CDevice_Palettes      = 0xB48   # D3DDevice_SetPalette 0x1938A0 reads/stores [device + stage * 4 + 0xB48] at 0x1938AD/0x1938E5; CDevice_UnInit releases both arrays from lea edi, [esi+0B48h] (0x196B94)
+CDevice_RenderTarget  = 0x15B4  # SetRenderTarget's body 0x190BE0 (D3DDevice_SetRenderTarget 0x192D60 calls it) reads it for a NULL target at 0x190BF7, stores the new one at 0x190E8A
+CDevice_Depth         = 0x15B8  # SetRenderTarget's body 0x190BE0 stores the depth surface at 0x190EAF; D3DDevice_GetDepthStencilSurface2 0x193570 returns [device + 0x15B8] (0x193576)
+CDevice_BackBuffer    = 0x15C0  # D3DDevice_GetBackBuffer2 0x1931F0 returns [device + 0x15C0] for index 0 (0x193220); D3DDevice_SetViewport compares the target with it (0x1935A0)
+CDevice_FrontBuffer   = 0x15C4  # D3DDevice_GetBackBuffer2 0x1931F0 returns [device + 0x15C4] for index -1 (0x193205); D3DDevice_SetViewport reads it at 0x1935A8
+CDevice_SwapCount     = 0x2018  # D3DDevice_Swap 0x1948F0: inc dword ptr [esi+2018h] (0x194950), returns it at 0x1949C1
+CDevice_Size          = 0x2040  # Direct3D_CreateDevice 0x18F8B0 clears the device with mov ecx, 810h; rep stosd on failure (0x18F92B); D3DDevice_Release 0x192EA9 likewise; 0x19FA10 + 0x2040 is D3D_Streams
+CDevice_Flags             = 0x8    # Direct3D_CreateDevice 0x18F8B0 ors BehaviorFlags & 0x10 into [device + 8] (0x19FA18, 0x18F8EF/0x18F904); CDevice_KickOff 0x192760 tests bits of [device + 8] (0x192765)
+CDevice_Time              = 0x2C   # CDevice_KickOff 0x192760 computes [device + 44] - 2 (0x192811) and stores it through the fence pointer [device + 48] (0x19281A); D3D_SetFence 0x1928B0 adds 2 (0x192940)
+CDevice_PixelShader       = 0x36C  # D3DDevice_SetPixelShader 0x195510 reads the old handle at 0x195518, stores the new one at [device + 0x36C] (0x195528)
+CDevice_VertexShader      = 0x37C  # D3DDevice_SetVertexShader 0x192270 stores the shader object at [device + 0x37C] (0x1922D8), the handle at +0x380 (0x1922DE); CDevice_Init stores the FVF shader 0x1A1C28 there (0x1969FE)
+CDevice_BackBufferScale   = 0x528  # 0x194440 reads [device + 0x528] as X (0x194449) and [device + 0x52C] as Y (0x194443) where 5558's 0x249130 reads +0x96C/+0x970; SetRenderTarget's body scales by both (0x190C1B, 0x190C15)
+CDevice_Viewport          = 0xA90  # D3DDevice_SetViewport 0x193590 stores X at 0x19368B ([device + 0xA90]), Y/Width/Height/MinZ/MaxZ at +4..+20 (0x193691..0x1936AF)
+CDevice_ScreenSpaceOffset = 0xAA8  # D3DDevice_SetScreenSpaceOffset 0x193C00 stores x + 0.53125 at [device + 0xAA8] (0x193C13), y at +0xAAC (0x193C23)
+CDevice_AutoDepth         = 0x15CC # D3D_InitDefaultState 0x195E30: mov esi, [ebp+15CCh] (0x195E90), passes it as render state 143 (push 8Fh, 0x195E9E); CDevice_Init hands it to SetRenderTarget (0x196A29)
+CDevice_VBlankCallback    = 0x1958 # the callback setter 0x192EF0 stores its argument at [device + 0x1958] (0x192EFA); the vertical blank handler 0x199A30 calls [miniport + 0x190] (0x199AFE, 0x199B25)
+CDevice_VBlankEvent       = 0x195C # D3DDevice_BlockUntilVerticalBlank 0x192F10 clears [device + 0x1960] (0x192F1B), waits on device + 0x195C (0x192F27); the handler signals miniport + 0x194 (0x199AF1)
+CDevice_DisplayFlags      = 0x197C # the display-field query 0x193960 tests [device + 0x197C] & 0x1200000 (0x193972); the handler tests miniport + 0x1B4 (0x199A9D)
+CDevice_VBlankCount       = 0x1988 # the display-field query 0x193960 returns [device + 0x1988] as the count (0x193965); the handler increments miniport + 0x1C0 (0x199A61)
+CDevice_Field             = 0x1998 # the display-field query 0x193960 derives the field from [device + 0x1998] == 0 (0x19397F); the handler stores it at miniport + 0x1D0 (0x199AC4)
+CDevice_GammaRamps        = 0x19A4 # the D3D debugger query 0x193C50 copies the ramp at device + 0x19A4 + index * 0x300 (0x193E13); the flip handler 0x199987 loads miniport + 0x1DC + slot * 0x300 (0x1999D3)
+CDevice_GammaPending      = 0x1FA4 # the flip handler 0x199987 tests [miniport + 0x7DC + slot * 4] == 1 (0x1999C3), clears it (0x1999E2); the mode set 0x1959F8 sets it (0x195AEB). SetGammaRamp is not linked
+# D3D8 globals
+DirtyFlags_Texture    = 0x4800  # D3DDevice_SetTexture 0x193777: or eax, 4800h into D3D_DirtyFlags (0x19F568, stored at 0x19377D)
+TextureState_Stage    = 32      # D3DDevice_SetTextureStageStateNotInline 0x190780: shl ecx, 5; add ecx, eax (0x19079B), D3D_DeferredTextureState[stage * 32 + type] at 0x1907AC
+Stream_Size           = 12      # D3DDevice_SetStreamSource 0x191E90: lea esi, [eax+eax*2]; shl esi, 2 (0x191EAA) indexes the stream table D3D_Streams 0x1A1A50
+Stream_Stride         = 0x0     # D3DDevice_SetStreamSource 0x191E90 stores Stride at table + stream * 12 + 0 (0x191EF2)
+Stream_Buffer         = 0x8     # D3DDevice_SetStreamSource 0x191E90 stores the vertex buffer at table + stream * 12 + 8 (0x191EF8, array at 0x1A1A58); the vertex array setup reads it there (0x199529)
+PixelShader_Definition = 0x8  # D3DDevice_SetPixelShader 0x195510 reads the definition pointer at [shader + 8] throughout (0x195590, 0x1955B7, 0x1955CC)
+# DSOUND
+CDirectSoundStream_Vtable  = 0x0  # CDirectSoundStream constructor 0x1B6AD1 stores the first vtable (0x2004C4) at [stream + 0] (0x1B6AEA); its destructor 0x1B5BCE restores it (0x1B5BD6)
+CDirectSoundStream_Vtable2 = 0x4  # the same constructor stores the second vtable (0x2004B8) at [stream + 4] (0x1B6AE3); the destructor restores it (0x1B5BDD)
+EffectsImage_Skip0    = 0x804   # the effects-image walker 0x1B7710 reads the dword count image[513] ([image + 0x804], 0x1B7729); the downloader 0x1B78F1 copies it (0x1B791C)
+EffectsImage_Skip1    = 0x80C   # the effects-image walker 0x1B7710 reads the dword count image[515] ([image + 0x80C], 0x1B7723); the downloader 0x1B78F1 copies it (0x1B792E)
+EffectsImage_Desc     = 0x818   # 0x1B7710: descriptor at image + 0x818 + (Skip0 + Skip1) * 4 (0x1B7732); the downloader 0x1B78F1 sends the image from + 0x818 (0x1B794C)
+# XAPI XPP device type record
+XPP_Current           = 0x0     # XGetDevices 0x1E7EE4 returns [edx] (0x1E7EEF) for the record the title passes (XPP_GamepadType 0x1E6C30, pushed at 0x12B96D)
+XPP_Changed           = 0x4     # XGetDevices clears [edx+4] at 0x1E7EF1; XGetDeviceChanges 0x1E7F06 tests it at 0x1E7F0F and clears it at 0x1E7F50
+XPP_Previous          = 0x8     # XGetDevices stores the current set into [edx+8] at 0x1E7EF7; XGetDeviceChanges diffs [esi] against [esi+8] (0x1E7F28) and re-copies at 0x1E7F54
