@@ -447,19 +447,40 @@ constexpr uint32_t kVscScreen = 121;     // the 2D unit to pixel matrix, horizon
 // and widen the 3-D fold's horizontal scale onto the widened frame (FrameFoldScale). This is the one
 // place both moves happen: every push-buffer reader and every SetVertexShaderConstant path stores
 // through here, so world draws (fold) and 2-D draws (screen matrix) cannot drift apart.
+// The centring depends on which surface is bound, and a title may store these constants while the frame
+// is still bound and only then switch to the off-screen surface it meant them for. Baking the shift in at
+// store time therefore pushes such a pass off its own target: it draws nothing and the surface keeps its
+// clear colour, which is how an arena floor that samples a cleared-white pass came out flat white. Keep
+// the value the title actually wrote and re-derive the shifted one whenever the bound surface changes.
+float g_vsc_raw[kVscCount][4];
+bool g_vsc_raw_set[kVscCount];
 void CentreVsConstant(uint32_t r) {
+    if (r != kVscFoldScale && r != kVscFoldOffset && r != kVscScreen) return;
+    std::memcpy(g_vsc_raw[r], g_state.vsc[r].data(), sizeof(g_vsc_raw[r]));
+    g_vsc_raw_set[r] = true;
     if (r == kVscFoldScale) {
         float f = FrameFoldScale();
         if (f == 1.0f) return;
         const float& x = g_state.vsc[r][0];
-        Set(x, x * f);
+        Set(x, g_vsc_raw[r][0] * f);
         return;
     }
-    if (r != kVscFoldOffset && r != kVscScreen) return;
     float dx = FrameCentreShift();
     if (dx == 0) return;
-    const float& x = g_state.vsc[r][r == kVscFoldOffset ? 0 : 3];
-    Set(x, x + dx);
+    uint32_t i = r == kVscFoldOffset ? 0 : 3;
+    const float& x = g_state.vsc[r][i];
+    Set(x, g_vsc_raw[r][i] + dx);
+}
+
+// the bound surface changed: the stored constants were centred for the old one
+void RecentreVsConstants() {
+    for (uint32_t r : {kVscFoldScale, kVscFoldOffset, kVscScreen}) {
+        if (!g_vsc_raw_set[r]) continue;
+        uint32_t i = r == kVscScreen ? 3 : 0;
+        const float& x = g_state.vsc[r][i];
+        Set(x, g_vsc_raw[r][i]);  // back to what the title wrote, then centre for the surface now bound
+        CentreVsConstant(r);
+    }
 }
 
 // the vertex shader constants of one inline push packet: [kVscPush, register + 96, (dwords << 18) | kVscMethod,
@@ -841,6 +862,7 @@ HLE_STDCALL(D3DDevice_SetRenderTarget, 2) {
     Set(g_state.rt, SurfaceOf(rt));
     Set(g_state.zs, SurfaceOf(zs));
     UpdateSuperSample();
+    RecentreVsConstants();  // the stored fold and screen constants were centred for the old surface
     // SetRenderTarget resets the viewport to the whole target
     uint32_t w, h;
     gpu::SurfaceSize(g_state.rt, w, h);
@@ -933,6 +955,7 @@ uint32_t PresentFrame(const char* name) {
     W32(g_buffers[0] + 4, data);
     W32(g_buffers[0] + 8, lk);
     Set(g_state.rt, SurfaceOf(Dev(kDevRenderTarget)));
+    RecentreVsConstants();
     uint32_t n = Dev(kDevSwapCount) + 1;
     SetDev(kDevSwapCount, n);
     return n;
