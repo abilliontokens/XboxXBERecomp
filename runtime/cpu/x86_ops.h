@@ -57,6 +57,9 @@ void x86_resume(X86Context& ctx, uint8_t* base, const X86Resume& r);
 void x86_kernel(X86Context& ctx, uint8_t* base, uint32_t ordinal);
 [[noreturn]] void x86_trap(X86Context& ctx, uint32_t va, const char* what);
 void x86_priv(X86Context& ctx, uint32_t va, const char* what);
+// "int 2Dh": the kernel's DebugService, which the image calls rather than implements. eax picks the
+// service; 1 is DebugPrint, whose ecx is an ANSI_STRING {uint16 Length, uint16 MaximumLength, char* Buffer}.
+void x86_debug_service(X86Context& ctx, uint8_t* base, uint32_t va);
 uint32_t x86_trace(X86Context& ctx, uint32_t va, uint32_t ret);  // ret 0 on entry, returns the return address
 uint64_t x86_rdtsc();
 void x86_cpuid(X86Context& ctx);

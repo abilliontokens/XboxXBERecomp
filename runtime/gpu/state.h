@@ -10,7 +10,9 @@
 // this to D3D12; nothing here models the console's GPU.
 namespace gpu {
 
-// D3DRS indices of the XDK 5849 build this title links, taken from its own tables
+// D3DRS indices as XDK 5849 numbers them, taken from its own tables. They are the host's numbering for every build:
+// g_state and the renderer use them whatever the title links, and xdk/d3d8.cpp maps a build that numbers its
+// D3D_RenderState otherwise (sdk/xdk/<build>/layout.toml, read by xdk/layout.h) to them where it reads or writes it.
 enum : uint32_t {
     kRsDeferredFirst = 92,
     kRsFogEnable = 92,
@@ -20,14 +22,22 @@ enum : uint32_t {
     kRsFogDensity = 96,
     kRsRangeFogEnable = 97,
     kRsWrap0 = 98,
+    kRsWrap1 = 99,
+    kRsWrap2 = 100,
+    kRsWrap3 = 101,
     kRsLighting = 102,
     kRsSpecularEnable = 103,
     kRsLocalViewer = 104,
     kRsColorVertex = 105,
+    kRsBackSpecularMaterialSource = 106,
+    kRsBackDiffuseMaterialSource = 107,
+    kRsBackAmbientMaterialSource = 108,
+    kRsBackEmissiveMaterialSource = 109,
     kRsSpecularMaterialSource = 110,
     kRsDiffuseMaterialSource = 111,
     kRsAmbientMaterialSource = 112,
     kRsEmissiveMaterialSource = 113,
+    kRsBackAmbient = 114,
     kRsAmbient = 115,
     kRsPointSize = 116,
     kRsPointSizeMin = 117,
@@ -37,8 +47,11 @@ enum : uint32_t {
     kRsPointScaleB = 121,
     kRsPointScaleC = 122,
     kRsPointSizeMax = 123,
+    kRsPatchEdgeStyle = 124,
+    kRsPatchSegments = 125,
+    kRsSwapFilter = 126,
     kRsPresentationInterval = 127,
-    kRsComplexFirst = 136,
+    kRsComplexFirst = 136,  // 128 to 135 are unused
     kRsPsTextureModes = 136,
     kRsVertexBlend = 137,
     kRsFogColor = 138,
@@ -71,6 +84,20 @@ enum : uint32_t {
     kRsDoNotCullUncompressed = 165,
     kRsMax = 166,
 };
+
+// Every render state above by name but the bounds, X(name) for each kRs<name>: tables over all of them are made from it
+#define GPU_RENDER_STATES(X)                                                                                           \
+    X(FogEnable) X(FogTableMode) X(FogStart) X(FogEnd) X(FogDensity) X(RangeFogEnable) X(Wrap0) X(Wrap1) X(Wrap2)      \
+    X(Wrap3) X(Lighting) X(SpecularEnable) X(LocalViewer) X(ColorVertex) X(BackSpecularMaterialSource)                 \
+    X(BackDiffuseMaterialSource) X(BackAmbientMaterialSource) X(BackEmissiveMaterialSource) X(SpecularMaterialSource)  \
+    X(DiffuseMaterialSource) X(AmbientMaterialSource) X(EmissiveMaterialSource) X(BackAmbient) X(Ambient) X(PointSize) \
+    X(PointSizeMin) X(PointSpriteEnable) X(PointScaleEnable) X(PointScaleA) X(PointScaleB) X(PointScaleC)              \
+    X(PointSizeMax) X(PatchEdgeStyle) X(PatchSegments) X(SwapFilter) X(PresentationInterval) X(PsTextureModes)         \
+    X(VertexBlend) X(FogColor) X(FillMode) X(BackFillMode) X(TwoSidedLighting) X(NormalizeNormals) X(ZEnable)          \
+    X(StencilEnable) X(StencilFail) X(FrontFace) X(CullMode) X(TextureFactor) X(ZBias) X(LogicOp) X(EdgeAntiAlias)     \
+    X(MultiSampleAntiAlias) X(MultiSampleMask) X(MultiSampleMode) X(MultiSampleRenderTargetMode) X(ShadowFunc)         \
+    X(LineWidth) X(SampleAlpha) X(Dxt1NoiseEnable) X(YuvEnable) X(OcclusionCullEnable) X(StencilCullEnable)            \
+    X(RopZCmpAlwaysRead) X(RopZRead) X(DoNotCullUncompressed)
 
 // Simple render states reach the API as (method, value) pairs; the method is the key the XDK's own
 // D3DSIMPLERENDERSTATEENCODE table assigns to each state.
@@ -114,14 +141,24 @@ enum : uint32_t {
     kMDepthClipControl = 0x1D78,
 };
 
-// texture stage state indices
+// texture stage state types as XDK 5849 numbers them, the host's for every build as the D3DRS indices above are; those
+// below kTssDeferredMax are deferred, the library applies them at the next draw
 enum : uint32_t {
     kTssAddressU = 0, kTssAddressV, kTssAddressW, kTssMagFilter, kTssMinFilter, kTssMipFilter, kTssMipLodBias,
     kTssMaxMipLevel, kTssMaxAnisotropy, kTssColorKeyOp, kTssColorSign, kTssAlphaKill, kTssColorOp, kTssColorArg0,
     kTssColorArg1, kTssColorArg2, kTssAlphaOp, kTssAlphaArg0, kTssAlphaArg1, kTssAlphaArg2, kTssResultArg,
     kTssTextureTransformFlags, kTssBumpEnvMat00, kTssBumpEnvMat01, kTssBumpEnvMat11, kTssBumpEnvMat10,
-    kTssBumpEnvLScale, kTssBumpEnvLOffset, kTssTexCoordIndex, kTssBorderColor, kTssColorKeyColor, kTssCount = 32
+    kTssBumpEnvLScale, kTssBumpEnvLOffset, kTssTexCoordIndex, kTssBorderColor, kTssColorKeyColor, kTssCount = 32,
+    kTssDeferredMax = kTssBumpEnvMat00
 };
+
+// every texture stage state type above by name, X(name) for each kTss<name> but kTssCount and kTssDeferredMax
+#define GPU_TEXTURE_STAGE_STATES(X)                                                                                    \
+    X(AddressU) X(AddressV) X(AddressW) X(MagFilter) X(MinFilter) X(MipFilter) X(MipLodBias) X(MaxMipLevel)            \
+    X(MaxAnisotropy) X(ColorKeyOp) X(ColorSign) X(AlphaKill) X(ColorOp) X(ColorArg0) X(ColorArg1) X(ColorArg2)         \
+    X(AlphaOp) X(AlphaArg0) X(AlphaArg1) X(AlphaArg2) X(ResultArg) X(TextureTransformFlags) X(BumpEnvMat00)            \
+    X(BumpEnvMat01) X(BumpEnvMat11) X(BumpEnvMat10) X(BumpEnvLScale) X(BumpEnvLOffset) X(TexCoordIndex) X(BorderColor) \
+    X(ColorKeyColor)
 
 struct VertexShader {
     uint32_t handle = 0;       // guest handle, record address | 1

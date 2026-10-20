@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -208,6 +209,31 @@ void x86_priv(X86Context& ctx, uint32_t va, const char* what) {
     std::lock_guard<std::mutex> lock(m);
     if (seen.insert(va).second) LOGW("privileged instruction %s at %08X ignored", what, va);
     (void)ctx;
+}
+
+// "int 2Dh", the kernel's DebugService. The image calls it; only the kernel implements it, and it
+// returns past the "int 3" the compiler puts after it, which the recompiler reproduces by giving the
+// int 2Dh that jump. eax picks the service: 1 is DebugPrint, whose ecx is an ANSI_STRING
+// {uint16 Length, uint16 MaximumLength, char* Buffer} - OutputDebugStringA builds exactly that on its
+// own stack. The title's own debug output is worth having, so it is logged rather than dropped.
+void x86_debug_service(X86Context& ctx, uint8_t* base, uint32_t va) {
+    if (ctx.eax == 1) {
+        uint16_t len = *(x86_u16u*)(base + ctx.ecx);
+        uint32_t buf = *(x86_u32u*)(base + ctx.ecx + 4);
+        std::string s;
+        for (uint16_t i = 0; i < len && i < 1024; i++) {
+            char c = char(base[buf + i]);
+            if (!c) break;
+            s += c == '\n' || c == '\r' ? ' ' : c;
+        }
+        while (!s.empty() && s.back() == ' ') s.pop_back();
+        if (!s.empty()) LOGI("guest: %s", s.c_str());
+        return;
+    }
+    static std::mutex m;
+    static std::unordered_set<uint32_t> seen;
+    std::lock_guard<std::mutex> lock(m);
+    if (seen.insert(va).second) LOGW("DebugService %u at %08X ignored", ctx.eax, va);
 }
 
 // the guest measured time against a 733.33 MHz time stamp counter

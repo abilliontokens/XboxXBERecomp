@@ -121,6 +121,20 @@ bool Analysis::DecodeFlow(uint32_t va, Insn& out, JumpTable* jt) {
     } else if (IsCond(m)) {
         out.flow = Flow::Jcc;
         out.target = uint32_t(va + in.length + ops[0].imm.value.s);
+    } else if (m == ZYDIS_MNEMONIC_INT && ops[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE &&
+               ops[0].imm.value.u == 0x2D) {
+        // DebugService. The NT and Xbox kernels answer "int 2Dh" by advancing the trap frame's eip
+        // past the "int 3" the compiler always puts after it, so on hardware execution resumes at
+        // va + length + 1 and the breakpoint never fires. Decoding it as a fall-through would make
+        // the int 3 the next instruction and stop the walk there, losing the rest of the function:
+        // OutputDebugStringA ends "int 2Dh; int 3; leave; retn 4".
+        uint32_t after = va + in.length;
+        uint32_t avail = 0;
+        const uint8_t* p = Bytes(after, avail);
+        if (p && avail >= 1 && *p == 0xCC) {
+            out.flow = Flow::Jmp;
+            out.target = after + 1;
+        }
     } else if (m == ZYDIS_MNEMONIC_RET) {
         out.flow = Flow::Ret;
     } else if (m == ZYDIS_MNEMONIC_IRETD || m == ZYDIS_MNEMONIC_IRET || m == ZYDIS_MNEMONIC_INT3 ||

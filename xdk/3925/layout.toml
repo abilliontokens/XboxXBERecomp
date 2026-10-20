@@ -1,0 +1,221 @@
+# XDK 3925 library data layouts the runtime reads or writes (D3D8 3925, DSOUND 3925,
+# XAPILIB/XBOXKRNL/LIBC/XGRAPHC 3911), proven against Fuzion Frenzy (USA) default.xbe,
+# sha1 c6fb6082900532cde5fa8dbb7de8dfa202f0fdad, title 0x4D530002, base 0x10000.
+#
+# Every value here must be proven by this image's own code at the address quoted beside it,
+# exactly as sdk/xdk/5849/layout.toml does. A value copied from another XDK build would be
+# silently wrong: 3925 is a launch-era build and its CDevice is not 5849's. A value that is
+# absent is not guessed - sdk/runtime/xdk/layout.h traps where it is first needed and names it,
+# which is a loud, debuggable failure rather than memory corruption.
+#
+# Why this file has to exist: the 45 keys of sdk/xdk/5849/layout.toml and sdk/xdk/5558/layout.toml
+# have byte-identical values, so those two builds agree completely, and 3925 disagrees with both on
+# nearly every CDevice offset (BaseVertex 0x1C -> 0x478, IndexBuffer 0x7A0 -> 0x47C, Transforms
+# 0xC60 -> 0x880, RenderTarget 0x1A04 -> 0x40C, Flags 0x8 -> 0xC, Time 0x2C -> 0x1C, SwapCount
+# 0x2478 -> 0x2B60, ...) and on DirtyFlags_Texture (0x4800 -> 0x408). Its CDevice is 0x2B90 bytes,
+# keeps the dirty flags at +8 and embeds its frame buffer surfaces instead of pointing at them, and
+# the build numbers its render and texture stage states differently. No 5849 value is a safe default.
+# What does agree is proven on its own: the push pointer pair, the stream table, the texture stage
+# stride, the DSOUND effects image and the XAPI XPP record.
+#
+# Addresses are this image's (out/ff.exe, the xbe2pe.py flat PE, guest addresses 1:1); "5558" is the
+# same code in The Sims: Bustin' Out (XDK 5558), whose values are 5849's. The evidence in full is in
+# docs/d3d8-core-symbols.md, docs/d3d8-state-symbols.md and docs/effects-image-xpp.md.
+[layout]
+# D3D8 CDevice, the static device D3D_pDevice 0x206720 points at (D3D_Device 0x203B90, Direct3D_CreateDevice 0x1F7650).
+# Its miniport is embedded at +0x2308: CDevice_Init 0x1FBBDC passes this + 0x2308 to the miniport init 0x1FE540.
+CDevice_Push          = 0x0     # the push-room helper 0x1FB3B0 reads [device] at 0x1FB3B4; D3DDevice_SetRenderState_Simple 0x1F6650 advances [0x203B90]
+CDevice_PushThreshold = 0x4     # 0x1FB3B6 compares the push pointer with [device + 4] and calls D3DDevice_MakeSpace 0x1FB110; Simple 0x1F6658 compares with [0x203B94]
+CDevice_BaseVertex    = 0x478   # D3DDevice_SetIndices 0x1F6170 stores BaseVertexIndex at 0x1F61C9/0x1F61DE/0x1F61F3; D3DDevice_DrawIndexedVertices 0x20157E reads it
+CDevice_IndexBuffer   = 0x47C   # D3DDevice_SetIndices 0x1F619A reads the old one, 0x1F61C2 stores the new one
+CDevice_ZScale        = 0x4F8   # D3DDevice_SetRenderTarget 0x1F575D has 0x1FCCB0 store the depth format's maximum there; the viewport push 0x1F6FB4 scales MinZ and MaxZ by it
+CDevice_SuperSampleX  = 0x500   # 0x1F70E0 (from SetRenderTarget) stores the X scale at 0x1F7199; the viewport push 0x1F6ECC and D3DDevice_Clear 0x1FC432 scale X by it
+CDevice_SuperSampleY  = 0x504   # 0x1F70E0 stores the Y scale at 0x1F719F; the viewport push 0x1F6EEE and D3DDevice_Clear 0x1FC468 scale Y by it
+CDevice_Transforms    = 0x880   # D3DDevice_SetTransform 0x1F5371: lea edi, [type + 22h]; shl edi, 6; add edi, device, then copies 16 dwords to +0x880 + type * 64
+CDevice_Textures      = 0xBA0   # D3DDevice_SetTexture 0x1F5F9E reads, 0x1F5FD3 stores [device + stage * 4 + 0xBA0]
+CDevice_Palettes      = 0xBB0   # D3DDevice_SetPalette 0x1F60F0: 0x1F60FD reads, 0x1F6135 stores [device + stage * 4 + 0xBB0]
+CDevice_RenderTarget  = 0x40C   # D3DDevice_SetRenderTarget 0x1F5655 reads it for a NULL target, 0x1F572A stores the new one; D3DDevice_Clear 0x1FC1C3 reads it
+CDevice_Depth         = 0x410   # D3DDevice_SetRenderTarget 0x1F574F stores the depth surface; GetDepthStencilSurface 0x1F5B40 returns it (0x1F5B45)
+CDevice_SwapCount     = 0x2B60  # D3DDevice_Present 0x20218C increments it; CDevice_KickOff's no-hardware path 0x1FAF69 copies it to +0x2518 (5558 0x24D1C2: +0x2478 to +0x1DE4)
+CDevice_Size          = 0x2B90  # D3DDevice_Release 0x1F54EB clears 0xAE4 dwords of the device; 0x203B90 + 0x2B90 = 0x206720, D3D_pDevice, the next variable
+CDevice_Flags             = 0xC     # Direct3D_CreateDevice 0x1F76AE ors BehaviorFlags & 0x10 into it (5849's are at +8, where 3925 keeps the dirty flags); SetVertexShaderConstant 0x1F84BA tests that bit
+CDevice_Time              = 0x1C    # D3D_KickOffAndWaitForIdle 0x1FB305 passes it to D3D_BlockOnTime, D3D_SetFence 0x1FB00D adds 2
+CDevice_PixelShader       = 0x414   # D3DDevice_SetPixelShader 0x20232E reads the old handle, 0x202334 stores the new one; TextureFactor 0x1F68C7 tests it
+CDevice_VertexShader      = 0x470   # CDevice_Init 0x1FBF4A stores the FVF shader object 0x2067E8, D3DDevice_SetVertexShader 0x1F8406 the current one (its handle at +0x474)
+CDevice_Viewport          = 0xB00   # D3DDevice_SetViewport 0x1F5C6D to 0x1F5C91 stores X, Y, Width, Height, MinZ, MaxZ
+CDevice_AutoDepth         = 0x2198  # the frame buffer init 0x1FB9A9 stores the depth buffer's memory there (its embedded surface is +0x219C, CDevice_Init 0x1FBF67); D3D_InitDefaultState 0x1FB5D0 tests it nonzero for ZEnable
+# A trap for whoever wires the vertical blank callback for a 3925 title: the handler 0x1FD802 calls it with the blank
+# count BY VALUE (cdecl, one dword), where sdk/runtime/xdk/d3d8.cpp VerticalBlank passes 5849's {count, swaps, flag}
+# by pointer, which the guest would take for the count. This title never sets a callback, so the path is dead here.
+CDevice_VBlankCallback    = 0x24EC  # the vertical blank handler 0x1FD802 calls it through [miniport + 0x1E4], with the count by value; nothing in this image stores one
+CDevice_VBlankEvent       = 0x24F0  # D3DDevice_BlockUntilVerticalBlank 0x1F5537 waits on it, 0x1F552B clears its SignalState; the handler 0x1FD7FC signals miniport + 0x1E8, the same event
+CDevice_DisplayFlags      = 0x2510  # GetDisplayFieldStatus 0x1F6212 tests [device + 0x2510] & 0x1200000; the mode set 0x1FD61D stores the mode entry's flags at miniport + 0x208
+CDevice_VBlankCount       = 0x2B28  # the vertical blank handler 0x1FD715 increments miniport + 0x820; GetDisplayFieldStatus 0x1F6205 returns it as the count
+# No such field in this build, so these stay absent and layout.h traps if anything needs one:
+#   CDevice_BackBuffer        the back buffers are surfaces embedded in the device at +0x2150 + index * 0x18, not pointers
+#                             (GetBackBuffer 0x1F58BE returns device + 0x2150 for index 0); a pointer written there would
+#                             overwrite the surface
+#   CDevice_FrontBuffer       the front buffer is the embedded surface at +0x2168 (GetBackBuffer for index -1, PersistDisplay 0x1F64EA)
+#   CDevice_BackBufferScale   the only scale pair is the super-sample one at +0x500/+0x504
+#   CDevice_ScreenSpaceOffset D3DDevice_SetScreenSpaceOffset is not linked: the viewport push 0x1F6EB0 adds the constant
+#                             flt_2025A4 = 0.53125 inline (0x1F6EDA, 0x1F6F02, its only xrefs, neither a write) where
+#                             5558's 0x24A700 adds [device + 0xEF8]
+#   CDevice_Field             GetDisplayFieldStatus 0x1F621E and the ISR 0x1FD68E read the field from
+#                             I/O port 0x80C0 bit 5
+# Unconfirmed, so absent: derived from the display driver's code rather than from a setter, and this title never
+# writes a gamma ramp (D3DDevice_SetGammaRamp is not linked). The driver picks the slot by its own counter
+# [miniport + 0x210] & 1, not by the swap count.
+#   CDevice_GammaRamps   0x251C  the vertical blank handler 0x1FD78A loads the ramp at miniport + 0x214 + index * 0x300;
+#                                0x1FDF83 builds the identity ramps there
+#   CDevice_GammaPending 0x2B1C  the vertical blank handler 0x1FD77A tests [miniport + 0x814 + index * 4] == 1 and clears
+#                                it at 0x1FD799; the mode set 0x1FD613 sets it
+# D3D8 globals
+DirtyFlags_Texture    = 0x408   # D3DDevice_SetTexture 0x1F6002 ors it into the dirty flags (D3D_DirtyFlags 0x203B98, CDevice + 8 here) clearing a stage: 0x400 format (0x1F60C6), 8 enable (0x1F60D8); 5558 0x247247 ors 0x4800
+TextureState_Stage    = 32      # D3DDevice_SetTextureStageStateNotInline 0x1F6DB0: shl edx, 5; add edx, eax at 0x1F6DC3, D3D_DeferredTextureState[stage * 32 + type]
+Stream_Size           = 12      # D3DDevice_SetStreamSource 0x1F801B: lea esi, [eax+eax*2]; shl esi, 2
+Stream_Stride         = 0x0     # D3DDevice_SetStreamSource 0x1F807A stores Stride at D3D_Streams 0x206728 + n * 12
+Stream_Buffer         = 0x8     # D3DDevice_SetStreamSource 0x1F8074 stores the vertex buffer at 0x206730 + n * 12
+# PixelShader_Definition is absent: not derived for this build yet
+# D3D8 render state numbering: this build's D3D_RenderState index (0x203950, 144 dwords ending at D3D_Device) of each
+# gpu::kRs<name> of sdk/runtime/gpu/state.h, which numbers them as 5849 does, and -1 for a state this build does not
+# have, which the runtime then never writes to the title's table. sdk/runtime/xdk/layout.h reads the table; a build
+# without one numbers its states as 5849 does. 5849's 82 (DepthClipControl) to 91 are not in this build's simple block:
+# D3D_SimpleRenderStateEncode 0x253520 has 82 entries, each as 5558's 0..81.
+RenderState_DeferredFirst               = 82   # D3DDevice_SetRenderStateNotInline 0x1F66A0: cmp esi, 52h at 0x1F66A5, below it Simple(D3D_SimpleRenderStateEncode[state]) (5849 92)
+RenderState_ComplexFirst                = 116  # SetRenderStateNotInline 0x1F66C9 cmp esi, 74h: below it the deferred states, from it call [0x2023F0 + state * 4] at 0x1F66EF (5849 136)
+RenderState_Max                         = 144  # the complex handlers at 0x2025C0 = 0x2023F0 + 116 * 4 are 28, slot 144 holds data; D3D_InitDefaultState 0x1FB580 sweeps to cmp esi, 15Ch (5849 166)
+# Deferred, 82..115, each 5849's index - 10: the dirty table dword_2024E8[state] has 5558's (dword_2E1DB0) groups in the
+# same sizes and order, and each lazy-state reader reads the same states 10 lower than its 5558 twin.
+RenderState_FogEnable                   = 82   # fog reader 0x1F8E20 (5558 0x2541D0: 92..97), dirty 0x40
+RenderState_FogTableMode                = 83   # fog reader 0x1F8E20; the constants reader 0x1F82C0 reads only this slot (5558 0x24C300: 93)
+RenderState_FogStart                    = 84   # fog reader 0x1F8E20 (5558 0x2541D0: 92..97), dirty 0x40
+RenderState_FogEnd                      = 85   # fog reader 0x1F8E20 (5558 0x2541D0: 92..97), dirty 0x40
+RenderState_FogDensity                  = 86   # fog reader 0x1F8E20 (5558 0x2541D0: 92..97), dirty 0x40
+RenderState_RangeFogEnable              = 87   # fog reader 0x1F8E20 (5558 0x2541D0: 92..97), dirty 0x40
+RenderState_Wrap0                       = 88   # wrap reader 0x1F8C20 (5558 0x253FE0: 98), dirty 0x10
+RenderState_Wrap1                       = 89   # the wrap group's dirty 0x10
+RenderState_Wrap2                       = 90   # the wrap group's dirty 0x10
+RenderState_Wrap3                       = 91   # the wrap group's dirty 0x10
+RenderState_Lighting                    = 92   # light readers 0x1F9790 and 0x1F9AB0 (5558 0x254B60, 0x254EB0: 102), dirty 0x22, its own
+RenderState_SpecularEnable              = 93   # fog reader 0x1F8E20 and light reader 0x1F9790 (5558: 103), dirty 0x60, its own
+RenderState_LocalViewer                 = 94   # light reader 0x1F9790 (5558 0x254B60: 104)
+RenderState_ColorVertex                 = 95   # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_BackSpecularMaterialSource  = 96   # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_BackDiffuseMaterialSource   = 97   # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_BackAmbientMaterialSource   = 98   # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_BackEmissiveMaterialSource  = 99   # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_SpecularMaterialSource      = 100  # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_DiffuseMaterialSource       = 101  # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_AmbientMaterialSource       = 102  # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_EmissiveMaterialSource      = 103  # material source reader 0x1F8540 (5558 0x253850: 105..113)
+RenderState_BackAmbient                 = 104  # ambient reader 0x1F94B0, the back scene ambient 0C17A0h (5558 0x254860: 114)
+RenderState_Ambient                     = 105  # ambient reader 0x1F94B0, the scene ambient 0C0A10h (5558 0x254860: 115)
+RenderState_PointSize                   = 106  # point reader 0x1F8730 (5558 0x253AF0: 116..123), 4043Ch
+RenderState_PointSizeMin                = 107  # point reader 0x1F8730 (5558 0x253AF0: 116..123)
+RenderState_PointSpriteEnable           = 108  # point readers 0x1F8730 and 0x1F8A20 (5558 0x258F80: 118), dirty 0x9, its own
+RenderState_PointScaleEnable            = 109  # point reader 0x1F8730 (5558 0x253AF0: 116..123)
+RenderState_PointScaleA                 = 110  # point reader 0x1F8730 (5558 0x253AF0: 116..123)
+RenderState_PointScaleB                 = 111  # point reader 0x1F8730 (5558 0x253AF0: 116..123)
+RenderState_PointScaleC                 = 112  # point reader 0x1F8730 (5558 0x253AF0: 116..123)
+RenderState_PointSizeMax                = 113  # point reader 0x1F8730 (5558 0x253AF0: 116..123)
+RenderState_PatchEdgeStyle              = 114  # no reader in either build: its place, and dirty 0 in both
+RenderState_PatchSegments               = 115  # no reader in either build: its place, and dirty 0 in both
+RenderState_SwapFilter                  = -1   # absent: the deferred block ends at 115, PatchSegments (0x1F66C9)
+RenderState_PresentationInterval        = -1   # absent: the deferred block ends at 115, PatchSegments (0x1F66C9)
+# Complex, 116..143: the handler at 0x2025C0 + (index - 116) * 4 stores its argument at 0x203950 + index * 4, so the
+# table order is the index order. 5558's table 0x259DD0 holds the same handlers in the same order, and the two that
+# 3925 lacks besides; the NV2A tokens of the handlers between CullMode and LineWidth place the gap.
+RenderState_PsTextureModes              = 116  # handler 0x1F6620 stores 0x203B20
+RenderState_VertexBlend                 = 117  # handler 0x1F6BB0 stores 0x203B24
+RenderState_FogColor                    = 118  # handler 0x1F6790 stores 0x203B28 (0x1F67CD)
+RenderState_FillMode                    = 119  # handler 0x1F6AC0 stores 0x203B2C
+RenderState_BackFillMode                = 120  # handler 0x1F6B00 stores 0x203B30
+RenderState_TwoSidedLighting            = 121  # handler 0x1F6B50 stores 0x203B34
+RenderState_NormalizeNormals            = 122  # handler 0x1F6890 stores 0x203B38
+RenderState_ZEnable                     = 123  # handler 0x1F7300 stores 0x203B3C; D3D_InitDefaultState 0x1FB5DE push 7Bh where 5558 0x24F9A5 pushes 8Fh
+RenderState_StencilEnable               = 124  # handler 0x1F7370 stores 0x203B40
+RenderState_StencilFail                 = 125  # handler 0x1F73F0 stores 0x203B44 (0x1F744F)
+RenderState_FrontFace                   = 126  # handler 0x1F6850 stores 0x203B48
+RenderState_CullMode                    = 127  # handler 0x1F67E0 stores 0x203B4C (0x1F6838)
+RenderState_TextureFactor               = 128  # handler 0x1F68C0 stores 0x203B50
+RenderState_ZBias                       = 129  # handler 0x1F69F0 stores 0x203B54 and sets states 77..81 through SetRenderStateNotInline
+RenderState_LogicOp                     = 130  # handler 0x1F6A70 stores 0x203B58
+RenderState_EdgeAntiAlias               = 131  # handler 0x1F6730 stores 0x203B5C
+RenderState_MultiSampleAntiAlias        = 132  # handler 0x1F75B0 stores 0x203B60
+RenderState_MultiSampleMask             = 133  # handler 0x1F7600 stores 0x203B64
+# Slot 134 is D3DRS_MULTISAMPLETYPE, a state 5849 does not have: its handler 0x1F65F0 stores 0x203B68 and re-applies
+# the render target (SetRenderTarget([device + 0x40C], [device + 0x410])), and its readers 0x1F70E0 and 0x1F6EFC decode
+# a D3DMULTISAMPLE_TYPE bit field. It sits where 5849 has MultiSampleMode (154), and D3D_InitDefaultState skips it as
+# 5558's skips 154, but it takes another kind of value: MultiSampleMode is absent here, not 134, and the runtime keeps
+# slot 134 for the title alone. Do not wire the two together.
+RenderState_MultiSampleMode             = -1   # absent: 5849's D3DMULTISAMPLEMODE, which slot 134 is not (above)
+RenderState_MultiSampleRenderTargetMode = -1   # absent: 8 handlers from CullMode to LineWidth where 5558 has 9, none for this between 134 and ShadowFunc
+RenderState_ShadowFunc                  = 135  # handler 0x1F6760 stores 0x203B6C
+RenderState_LineWidth                   = 136  # handler 0x1F6910 stores 0x203B70 (0x1F6965)
+RenderState_SampleAlpha                 = -1   # absent: LineWidth's handler is followed by Dxt1NoiseEnable's, and the 41D7Ch value takes only AntiAlias and Mask
+RenderState_Dxt1NoiseEnable             = 137  # handler 0x1F6970 stores 0x203B74
+RenderState_YuvEnable                   = 138  # handler 0x1F7460 stores 0x203B78
+RenderState_OcclusionCullEnable         = 139  # handler 0x1F7490 stores 0x203B7C
+RenderState_StencilCullEnable           = 140  # handler 0x1F74F0 stores 0x203B80
+RenderState_RopZCmpAlwaysRead           = 141  # handler 0x1F7550 stores 0x203B84
+RenderState_RopZRead                    = 142  # handler 0x1F7570 stores 0x203B88
+RenderState_DoNotCullUncompressed       = 143  # handler 0x1F7590 stores 0x203B8C
+# D3D8 texture stage state numbering: this build's type, the index within a stage of D3D_DeferredTextureState 0x203750,
+# of each gpu::kTss<name>, read as the render state table is. Types 0..21 are rotated against 5849, 3925 type =
+# (5849 type + 10) mod 22, so COLOROP is 0 and ADDRESSU 10; 22..30 are 5849's. The rotation: D3D_InitDefaultState
+# 0x1FB580 ends with TSS(0, 0, 4) and TSS(0, 4, 2) (0x1FB616..0x1FB627) where 5558's 0x24F940 ends with TSS(0, 0Ch, 4)
+# and TSS(0, 10h, 2) (0x24F9DF..0x24F9F0), COLOROP = MODULATE and ALPHAOP = SELECTARG1; of all 22 shifts only this one
+# lines up both the per-type default table byte_202AB8 and the dirty table dword_2036B0 with 5558's byte_2632A4 and
+# dword_2E1EC8; and the combiner compiler 0x1FEAD0..0x1FF9D0 reads only types 0..8, the op, argument and result
+# states. Inside the runs whose default and dirty class agree (10..14, 15..17, 19..21) the order rests on the rotation
+# being a plain one: nothing contradicts it, but no reader tells those slots apart.
+TextureState_DeferredMax           = 22   # D3DDevice_SetTextureStageStateNotInline 0x1F6DB0 stores types below 16h to D3D_DeferredTextureState (0x1F6DD4), as 5849's
+TextureState_ColorOp               = 0    # D3D_InitDefaultState sets TSS(0, 0, 4) where 5558's sets TSS(0, 0Ch, 4), D3DTOP_MODULATE (5849 12)
+TextureState_ColorArg0             = 1    # the rotation above; the combiner compiler 0x1FEAD0 reads it (5849 13)
+TextureState_ColorArg1             = 2    # the rotation above; the combiner compiler 0x1FEAD0 reads it (5849 14)
+TextureState_ColorArg2             = 3    # the rotation above; the combiner compiler 0x1FEAD0 reads it (5849 15)
+TextureState_AlphaOp               = 4    # D3D_InitDefaultState sets TSS(0, 4, 2) where 5558's sets TSS(0, 10h, 2), D3DTOP_SELECTARG1 (5849 16)
+TextureState_AlphaArg0             = 5    # the rotation above; the combiner compiler 0x1FEAD0 reads it (5849 17)
+TextureState_AlphaArg1             = 6    # the rotation above; the combiner compiler 0x1FEAD0 reads it (5849 18)
+TextureState_AlphaArg2             = 7    # the rotation above; the combiner compiler 0x1FEAD0 reads it (5849 19)
+TextureState_ResultArg             = 8    # the rotation above; the combiner compiler 0x1FEAD0 reads it (5849 20)
+TextureState_TextureTransformFlags = 9    # the rotation above; dirty 0x4, its own, as 5558's 0x400 is (5849 21)
+TextureState_AddressU              = 10   # the rotation above (5849 0)
+TextureState_AddressV              = 11   # the rotation above (5849 1)
+TextureState_AddressW              = 12   # the rotation above (5849 2)
+TextureState_MagFilter             = 13   # the rotation above (5849 3)
+TextureState_MinFilter             = 14   # the rotation above (5849 4)
+TextureState_MipFilter             = 15   # the rotation above (5849 5)
+TextureState_MipLodBias            = 16   # the rotation above (5849 6)
+TextureState_MaxMipLevel           = 17   # the rotation above (5849 7)
+TextureState_MaxAnisotropy         = 18   # the rotation above; default 1 between two runs of 0 (5849 8)
+TextureState_ColorKeyOp            = 19   # the rotation above (5849 9)
+TextureState_ColorSign             = 20   # the rotation above (5849 10)
+TextureState_AlphaKill             = 21   # the rotation above (5849 11)
+# 22..30 are 5849's: NotInline 0x1F6DB0 sends 16h..1Bh to D3DDevice_SetTextureState_BumpEnv 0x1F6CD0 (0x1F6E30), which
+# makes the type its NV2A method, 41AD0h + (stage' * 16 + type) * 4, as its 5558 twin 0x24A4A0 does.
+TextureState_BumpEnvMat00          = 22   # D3DDevice_SetTextureState_BumpEnv 0x1F6CD0, as 5558's 0x24A4A0
+TextureState_BumpEnvMat01          = 23   # D3DDevice_SetTextureState_BumpEnv 0x1F6CD0, as 5558's 0x24A4A0
+TextureState_BumpEnvMat11          = 24   # D3DDevice_SetTextureState_BumpEnv 0x1F6CD0, as 5558's 0x24A4A0
+TextureState_BumpEnvMat10          = 25   # D3DDevice_SetTextureState_BumpEnv 0x1F6CD0, as 5558's 0x24A4A0
+TextureState_BumpEnvLScale         = 26   # D3DDevice_SetTextureState_BumpEnv 0x1F6CD0, as 5558's 0x24A4A0
+TextureState_BumpEnvLOffset        = 27   # D3DDevice_SetTextureState_BumpEnv 0x1F6CD0, as 5558's 0x24A4A0
+TextureState_TexCoordIndex         = 28   # NotInline calls D3DDevice_SetTextureState_TexCoordIndex 0x1F6BF0 for 1Ch (0x1F6DF1), which stores [stage][28] at 0x2037C0
+TextureState_BorderColor           = 29   # NotInline sends 1Dh to D3DDevice_SetTextureState_BorderColor 0x1F6D30, which stores [stage][29] at 0x2037C4
+TextureState_ColorKeyColor         = 30   # NotInline sends 1Eh to D3DDevice_SetTextureState_ColorKeyColor 0x1F6D70, which stores [stage][30] at 0x2037C8
+# DSOUND effects image. The 3925 format is the host's model exactly: the table is at Desc + (image[Skip0] +
+# image[Skip1]) * 4, the count is the dword at the table, and the records are 32 bytes holding four (pointer, size)
+# pairs at +0/+4, +8/+12, +16/+20, +24/+28. The game's own image rules out an off-by-a-field error: bInitSpecificWave
+# 0x55440 downloads the static array 0x285A98 of 0x60F8 bytes, whose table lands at 0x5FD8 and declares 7 effects; the
+# 7 records and the 7 eight-byte keys after them end at 0x60F8, the image size, and the code and data offsets inside the
+# records run on without gaps. A wrong offset could not land there.
+EffectsImage_Skip0    = 0x804   # 0x209200 add eax, [ebx+804h], in the parser 0x2091EB reached from IDirectSound_DownloadEffectsImage 0x20726F via 0x206B88
+EffectsImage_Skip1    = 0x80C   # 0x2091FA mov eax, [ebx+80Ch]
+EffectsImage_Desc     = 0x818   # 0x209208 lea esi, [ebx+eax*4+818h]; the count is read at 0x20920F, the records walked from table + 8 at 0x2092B3 with add edi, 20h
+# CDirectSoundStream_Vtable and CDirectSoundStream_Vtable2 are absent: this build has no stream class at all
+# XAPI XPP device type record, read by XGetDevices 0x24D37E: three dwords, Current, Changed and Previous, the records
+# 12 bytes apart (0x24C2BC, 0x24C2C8, 0x24C2D4), the same shape as 5849's. Worth saying in a file that is otherwise
+# mostly disagreements.
+XPP_Current           = 0x0     # XGetDevices 0x24D389 returns it
+XPP_Changed           = 0x4     # XGetDevices 0x24D38B clears it
+XPP_Previous          = 0x8     # XGetDevices 0x24D391 copies Current into it

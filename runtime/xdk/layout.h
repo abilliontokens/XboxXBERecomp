@@ -10,6 +10,7 @@
 
 namespace xdk {
 constexpr uint32_t kUnknown = 0xFFFFFFFFu;
+constexpr uint32_t kAbsent = 0xFFFFFFFFu;  // a state the build does not have: -1 in its state tables, below
 struct LayoutKey {
     const char* name;
     uint32_t value;
@@ -35,6 +36,24 @@ constexpr bool AllKnown(const LayoutKey (&keys)[N]) {
         static constexpr ::xdk::LayoutKey keys_[] = {__VA_ARGS__};                             \
         if constexpr (!::xdk::AllKnown(keys_)) ::xdk::LayoutMissing(lib, keys_, std::size(keys_)); \
     } while (0)
+
+// D3D8 state numbering. The host numbers render states and texture stage states as XDK 5849 does (gpu::kRs<name> and
+// gpu::kTss<name>, gpu/state.h), and xdk/d3d8.cpp maps the title's D3D_RenderState and D3D_DeferredTextureState to
+// that. A build that numbers one of them otherwise gives that table whole in its config: for the render states
+// RenderState_DeferredFirst, RenderState_ComplexFirst and RenderState_Max, its blocks, and RenderState_<name> for every
+// gpu::kRs<name>; for the texture stage states TextureState_DeferredMax and TextureState_<name> for every
+// gpu::kTss<name>. -1 is a state the build does not have. RenderState_Max and TextureState_DeferredMax say a table is
+// there; a build without one numbers those states as 5849 does, and a table that leaves out a name does not compile.
+#ifdef XDK_RenderState_Max
+#define XDK_RENDER_STATE(name) XDK_RenderState_##name
+#else
+#define XDK_RENDER_STATE(name) ::gpu::kRs##name
+#endif
+#ifdef XDK_TextureState_DeferredMax
+#define XDK_TEXTURE_STATE(name) XDK_TextureState_##name
+#else
+#define XDK_TEXTURE_STATE(name) ::gpu::kTss##name
+#endif
 
 #ifndef XDK_CDevice_Push
 #define XDK_CDevice_Push 0xFFFFFFFFu

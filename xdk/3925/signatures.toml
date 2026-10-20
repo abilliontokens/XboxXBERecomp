@@ -1,0 +1,278 @@
+# XDK 3925 library signatures, seeded by tools/sig_bootstrap.py from
+# signatures.toml (the nearest shipped build) against default.xbe's .XTLID.
+# No 5558 byte signatures exist yet, so no record carries len, hash or calls: with no
+# length a record is the documented no-signature form and the byte matcher skips it
+# instead of hunting for the reference build's hashes. What is copied is what survives
+# a rebuild: xtlid (the .XTLID export id, named directly when this image exports it),
+# sec, k (constant set), ret (stack bytes popped) and regs (registers read before
+# written), which the scanner's constant matcher scores against unclaimed starts.
+# [anchors] stay {} (byte-only in the reference). [data] is verbatim: xtlid entries
+# resolve from .XTLID, in/insn entries only once that function is found by its bytes.
+# Replace this seed with real signatures from `xbe_symbols --sign` when convenient.
+# D3DDevice_Present, D3DDevice_GetBackBuffer and D3DDevice_GetDepthStencilSurface are not from the seed: 3925 has
+# them where 5558 and 5849 have Swap, GetBackBuffer2 and GetDepthStencilSurface2. Their rows have no len, k or
+# xtlid, so the scan never matches them and the config gives their addresses by hand.
+
+[symbols]
+_CIacos = {sec = ".text", ret = 0, regs = []}
+_CIasin = {sec = ".text", ret = 0, regs = []}
+accept = {sec = "XNET", xtlid = 0x40001, regs = []}
+bind = {sec = "XNET", xtlid = 0x40002, regs = []}
+BinkDoFrame = {sec = "BINK", k = [0x40, 0x40, 0x40, 0x4B, 0x64, 0xB4, 0xB8, 0xB8, 0xBC, 0xBC, 0xC4, 0xC4, 0xCC, 0xCC, 0xD0, 0xD0, 0xDC, 0xDC, 0xF0, 0xF0, 0x104, 0x108, 0x10C, 0x110, 0x12C, 0x130, 0x138, 0x138, 0x140, 0x144, 0x144, 0x148, 0x148, 0x154, 0x158, 0x17C, 0x20C, 0x254, 0x258, 0x25C, 0x270, 0x270, 0x270, 0x274, 0x274, 0x278, 0x278, 0x278, 0x278, 0x278, 0x27C, 0x280, 0x280, 0x280, 0x284, 0x28C, 0x2A0, 0x2A4, 0x2AC, 0x2AC, 0x2AC, 0x2B0, 0x2B0, 0x2B0, 0x2B4, 0x2BC, 0x2C0, 0x2C4, 0x2C8, 0x2C8, 0x2C8, 0x2C8, 0x2C8, 0x2C8, 0x2C8, 0x2C8, 0x2C8, 0x2C8, 0x2CC, 0x2CC, 0x2D0, 0x2D4, 0x2D8, 0x2DC, 0x2E0, 0x2E4, 0x2EC, 0x2EC, 0x2F4, 0x2F4, 0x2F8, 0x300, 0x300, 0x300, 0x300, 0x308, 0x308, 0x308, 0x308, 0x308, 0x308, 0x308, 0x308, 0x308, 0x30C, 0x310, 0x318, 0x340, 0x354, 0x354, 0x8000000], ret = 4, regs = []}
+BinkGetSummary = {sec = "BINK", k = [0x40, 0x44, 0x48, 0x4C, 0x50, 0x54, 0x58, 0x5C, 0x60, 0x64, 0x68, 0x68, 0x6C, 0x6C, 0x70, 0x74, 0x78, 0xF4, 0xF8, 0x10C, 0x134, 0x13C, 0x140, 0x144, 0x148, 0x14C, 0x150, 0x250, 0x270, 0x274, 0x27C, 0x27C, 0x290, 0x294, 0x298, 0x29C, 0x2A8, 0x2AC, 0x2B0, 0x2B4, 0x2B4, 0x2B8, 0x2BC, 0x2BC, 0x2C0, 0x2C0, 0x304, 0x314], ret = 8, regs = []}
+BinkNextFrame = {sec = "BINK", k = [0x48, 0x5A, 0x5A, 0x5C, 0x5C, 0x64, 0x64, 0x110, 0x138, 0x138, 0x138, 0x138, 0x138, 0x154, 0x154, 0x158, 0x158, 0x17C, 0x20C, 0x27C, 0x27C, 0x280, 0x2B4, 0x300, 0x300, 0x300, 0x304, 0x304, 0x308, 0x308, 0x310, 0x340, 0x354], ret = 4, regs = []}
+BinkWait = {sec = "BINK", k = [0x6C, 0xFC, 0xFC, 0x108, 0x110, 0x20C, 0x270, 0x270, 0x270, 0x27C, 0x27C, 0x280, 0x280, 0x280, 0x284, 0x284, 0x288, 0x2A0, 0x2B4, 0x300, 0x300, 0x300, 0x308, 0x340, 0x340, 0x340, 0x340, 0x340, 0x344, 0x344, 0x3E8], ret = 4, regs = []}
+CDevice_KickOff = {sec = "D3D", k = [0x40, 0x40, 0x40, 0x44, 0x770, 0x1C20, 0x1C20, 0x1C20, 0x1C28, 0x1DE4, 0x2000, 0x2478, 0x100410, 0x100410, 0x100410, 0xFFFFFFF, 0xFFFFFFF], ret = 0, regs = ["ecx"]}
+CDirectSoundStream_AddRef = {sec = "DSOUND", k = [0x80004005], ret = 4, regs = []}
+CDirectSoundStream_Discontinuity = {sec = "DSOUND", k = [0x80004005], ret = 4, regs = []}
+CDirectSoundStream_Flush = {sec = "DSOUND", k = [0x80004005], ret = 4, regs = []}
+CDirectSoundStream_FlushEx = {sec = "DSOUND", k = [0x80004005], ret = 16, regs = []}
+CDirectSoundStream_GetInfo = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_GetStatus = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_Pause = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_Process = {sec = "DSOUND", k = [0x80004005, 0x88780032], ret = 12, regs = []}
+CDirectSoundStream_Release = {sec = "DSOUND", k = [0x80004005], ret = 4, regs = []}
+CDirectSoundStream_SetFilter = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_SetFormat = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_SetFrequency = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_SetHeadroom = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_SetI3DL2Source = {sec = "DSOUND", k = [0x80004005], ret = 12, regs = []}
+CDirectSoundStream_SetMaxDistance = {sec = "DSOUND", k = [0x80004005], ret = 12, regs = []}
+CDirectSoundStream_SetMinDistance = {sec = "DSOUND", k = [0x80004005], ret = 12, regs = []}
+CDirectSoundStream_SetMixBins = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_SetMixBinVolumes = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+CDirectSoundStream_SetPosition = {sec = "DSOUND", k = [0x80004005], ret = 20, regs = []}
+CDirectSoundStream_SetVelocity = {sec = "DSOUND", k = [0x80004005], ret = 20, regs = []}
+CDirectSoundStream_SetVolume = {sec = "DSOUND", k = [0x80004005], ret = 8, regs = []}
+closesocket = {sec = "XNET", xtlid = 0x40003, regs = []}
+connect = {sec = "XNET", xtlid = 0x40004, regs = []}
+crt_acos = {sec = ".text", k = [0x3FF00000, 0x80000000], ret = 0, regs = ["eax"]}
+crt_asin = {sec = ".text", k = [0x3FF00000, 0x80000000], ret = 0, regs = ["eax"]}
+crt_atan = {sec = ".text", k = [0x80000000], ret = 0, regs = ["eax"]}
+crt_cos = {sec = ".text", ret = 0, regs = ["eax"]}
+crt_log = {sec = ".text", k = [0x7FF00000, 0x80000000, 0x80000000, 0x80000000], ret = 0, regs = ["eax"]}
+crt_log10 = {sec = ".text", k = [0x7FF00000, 0x80000000, 0x80000000, 0x80000000], ret = 0, regs = ["eax"]}
+crt_pow = {sec = ".text", k = [0x7FF00000, 0x7FF00000, 0x7FF00000, 0x7FF00000, 0x7FF00000, 0x7FFFFFFF], ret = 0, regs = ["eax"]}
+crt_sin = {sec = ".text", ret = 0, regs = ["eax"]}
+crt_sqrt = {sec = ".text", k = [0x7FF00000, 0x80000000, 0x80000000], ret = 0, regs = []}
+crt_tan = {sec = ".text", ret = 0, regs = ["eax"]}
+D3D_BlockOnResource = {sec = "D3D", k = [0x50000, 0x70000], ret = 4, regs = []}
+D3D_BlockOnTime = {sec = "D3D", k = [0x44, 0x44, 0x19FC, 0x19FC, 0x1A00, 0x1A00, 0x1DCC, 0x1DD0, 0x2000, 0x2000, 0x2400, 0x40100, 0x40100, 0x40110, 0x80000000], ret = 8, regs = []}
+D3D_InitDefaultState = {sec = "D3D", k = [0x7E, 0x7F, 0x9A, 0xA6, 0x1A20], ret = 0, regs = []}
+D3D_InternalAddRef = {sec = "D3D", k = [0x50000, 0x70000, 0x80000, 0x80000], ret = 4, regs = []}
+D3D_InternalRelease = {sec = "D3D", k = [0xFFFF, 0x50000, 0x70000, 0x80000, 0xFFF80000, 0xFFF80000], ret = 4, regs = []}
+D3D_KickOffAndWaitForIdle = {sec = "D3D", ret = 0, regs = []}
+D3D_MakeRequestedSpace = {sec = "D3D", k = [0x40, 0x40, 0x44, 0x44, 0x48, 0x764, 0x768, 0x768, 0x1000, 0x4000, 0xFFFFFFF, 0xFFFFFDFC], ret = 8, regs = []}
+D3D_SetFence = {sec = "D3D", k = [0x40, 0x48, 0x48, 0x64, 0x68, 0x41D70, 0x41D90, 0x4A310], ret = 4, regs = []}
+D3DDevice_Begin = {sec = "D3D", k = [0x800, 0x417FC], ret = 4, regs = []}
+D3DDevice_BeginPush = {}
+D3DDevice_BlockOnFence = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_BlockUntilVerticalBlank = {sec = "D3D", k = [0x1DBC, 0x1DC0], ret = 0, regs = []}
+D3DDevice_Clear = {sec = "D3D", k = [0x100, 0x95C, 0x95C, 0x960, 0x960, 0xEE0, 0xEE4, 0xEE8, 0xEEC, 0x1A04, 0x1A08, 0x40208, 0x40208, 0x81D98, 0xC1D8C, 0xFFFFFDFF], ret = 24, regs = []}
+D3DDevice_CopyRects = {sec = "D3D", k = [0xFFF, 0xFFF, 0x1000, 0x192C, 0x1FC0, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x86300, 0x86308, 0xC4300], ret = 20, regs = []}
+D3DDevice_CreatePixelShader = {sec = "D3D", k = [0x8007000E], ret = 8, regs = []}
+D3DDevice_CreateVertexShader = {sec = "D3D", k = [0x46, 0x7F, 0x114, 0x114, 0x114, 0x118, 0x2078, 0x7378, 0x8007000E], ret = 16, regs = []}
+D3DDevice_DeletePixelShader = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_DeleteVertexShader = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_DrawIndexedVertices = {sec = "D3D", k = [0x40, 0x40, 0x40, 0x40, 0x5C, 0x60, 0x1FF, 0x1FF, 0x3FE, 0x3FE, 0x800, 0x417FC, 0x417FC, 0x41808, 0x40001800, 0x40001800, 0x40001800, 0xFFFFE7FF], ret = 12, regs = []}
+D3DDevice_DrawVertices = {sec = "D3D", k = [0x100, 0x100, 0x100, 0x417FC, 0x417FC, 0x40001810, 0xFF000000, 0xFFFFFEFF], ret = 12, regs = []}
+D3DDevice_DrawVerticesUP = {sec = "D3D", k = [0x80, 0x7FF, 0x800, 0xBC8, 0xBC8, 0xBCC, 0xBD0, 0xBD4, 0xC54, 0x417FC, 0x417FC, 0x40001818, 0xFFFFE7FF], ret = 16, regs = []}
+D3DDevice_EnableOverlay = {sec = "D3D", k = [0x934, 0x1000, 0x8100, 0x8700, 0x8700, 0x8704, 0x8900, 0x8910, 0x8918, 0x8920, 0x8928, 0x8930], ret = 4, regs = []}
+D3DDevice_End = {sec = "D3D", k = [0x417FC, 0xFFFFE7FF], ret = 0, regs = []}
+D3DDevice_EndPush = {}
+D3DDevice_FlushVertexCache = {sec = "D3D", k = [0x41710], ret = 0, regs = []}
+D3DDevice_GetBackBuffer = {sec = "D3D", ret = 12, regs = []}
+D3DDevice_GetBackBuffer2 = {sec = "D3D", k = [0x1A14, 0x1A14], ret = 4, regs = []}
+D3DDevice_GetDepthStencilSurface = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_GetDepthStencilSurface2 = {sec = "D3D", k = [0x1A08], ret = 0, regs = []}
+D3DDevice_GetRenderTarget2 = {sec = "D3D", k = [0x1A04], ret = 0, regs = []}
+D3DDevice_GetVertexShaderFunction = {sec = "D3D", k = [0x80, 0x80, 0x117, 0x2078, 0x7378, 0x7778, 0x88760867], ret = 12, regs = []}
+D3DDevice_InsertFence = {sec = "D3D", ret = 0, regs = []}
+D3DDevice_IsFencePending = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_LightEnable = {sec = "D3D", k = [0x68, 0x68, 0x68, 0x8C, 0x8C, 0x8C, 0x7A4, 0x7A4, 0x7A8, 0x7AC, 0x7AC, 0x7CC, 0x7CC, 0x7CC, 0x7CC], ret = 8, regs = []}
+D3DDevice_LoadVertexShader = {sec = "D3D", k = [0x114, 0x41E9C], ret = 8, regs = []}
+D3DDevice_MakeSpace = {sec = "D3D", ret = 0, regs = []}
+D3DDevice_PersistDisplay = {sec = "D3D", k = [0x938, 0xFFF, 0xFFF, 0x1A18, 0x1C28, 0x1C30, 0x80004005, 0x80004005], ret = 0, regs = []}
+D3DDevice_Present = {sec = "D3D", ret = 16, regs = []}
+D3DDevice_Release = {sec = "D3D", k = [0x928, 0x938, 0x938], ret = 0, regs = []}
+D3DDevice_SelectVertexShader = {sec = "D3D", k = [0x70, 0x794, 0x794, 0x798, 0x79C, 0x1000, 0x41EA0, 0x81E94], ret = 8, regs = []}
+D3DDevice_SetFlickerFilter = {sec = "D3D", k = [0x1C28], ret = 4, regs = []}
+D3DDevice_SetGammaRamp = {sec = "D3D", k = [0xC0, 0xC0, 0x1DC, 0x1DC, 0x7DC, 0x7E4, 0x1C28, 0x240C, 0x2478], ret = 8, regs = []}
+D3DDevice_SetIndices = {sec = "D3D", k = [0x7A0, 0x7A0, 0x7A0, 0x7A0, 0x80000, 0xFFF80000], ret = 8, regs = []}
+D3DDevice_SetLight = {sec = "D3D", k = [0x40, 0x44, 0x48, 0x50, 0x60, 0x64, 0x68, 0x68, 0x6C, 0x78, 0x7C, 0x80, 0x84, 0x88, 0x8C, 0x8C, 0x90, 0x7A4, 0x7A4, 0x7A4, 0x7A4, 0x7A4, 0x7A8, 0x7A8, 0x7AC, 0x7AC, 0x7B0, 0x7B0, 0x7B4, 0x7B4, 0x7B8, 0x7B8, 0x7BC, 0x7BC, 0x7C0, 0x7C0, 0x7C4, 0x7C4, 0x7C8, 0x7C8, 0x7CC, 0x7CC, 0x8007000E], ret = 8, regs = []}
+D3DDevice_SetMaterial = {sec = "D3D", k = [0xF00, 0x9000], ret = 4, regs = []}
+D3DDevice_SetPalette = {}
+D3DDevice_SetPixelShader = {sec = "D3D", k = [0xA8, 0xA8, 0xAC, 0xAC, 0xB0, 0xB0, 0xB4, 0xB4, 0xB8, 0xBC, 0xC0, 0xD8, 0xD8, 0xDC, 0xE0, 0xE4, 0xE8, 0xEC, 0xEC, 0xF0, 0xF0, 0xF4, 0xF8, 0xFC, 0x100, 0x784, 0x784, 0x788, 0x788, 0x788, 0x788, 0x78C, 0x790, 0x2000, 0x2000, 0x4000, 0x4800, 0x417F8, 0x41E78, 0x80288, 0x81E20, 0x81E74, 0x200260, 0x210000, 0x241E40], ret = 4, regs = []}
+D3DDevice_SetPixelShaderConstant = {sec = "D3D", k = [0xE4, 0xE8, 0xEC, 0x784, 0x8E4, 0x40A60, 0x40A64, 0x40A68, 0x40A6C, 0x40A70, 0x40A74, 0x40A78, 0x40A7C, 0x40A80, 0x40A84, 0x40A88, 0x40A8C, 0x40A90, 0x40A94, 0x40A98, 0x40A9C, 0x41E20, 0x41E24, 0xC181C, 0xF0000, 0xF0000, 0xF000000, 0xF000000, 0xF0000000, 0xF0000000], ret = 12, regs = []}
+D3DDevice_SetRenderState_BackFillMode = {sec = "D3D", k = [0x8038C], ret = 4, regs = []}
+D3DDevice_SetRenderState_CullMode = {sec = "D3D", k = [0x404, 0x40308, 0x4039C], ret = 4, regs = []}
+D3DDevice_SetRenderState_DoNotCullUncompressed = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_SetRenderState_Dxt1NoiseEnable = {sec = "D3D", k = [0x1A04, 0x40100, 0x40110], ret = 4, regs = []}
+D3DDevice_SetRenderState_EdgeAntiAlias = {sec = "D3D", k = [0x80320], ret = 4, regs = []}
+D3DDevice_SetRenderState_FillMode = {sec = "D3D", k = [0x8038C], ret = 4, regs = []}
+D3DDevice_SetRenderState_FogColor = {sec = "D3D", k = [0xFF, 0x402A8, 0xFF00FF00], ret = 4, regs = []}
+D3DDevice_SetRenderState_FrontFace = {sec = "D3D", k = [0x403A0], regs = []}
+D3DDevice_SetRenderState_LineWidth = {sec = "D3D", k = [0x1FF, 0x1FF, 0x964, 0x40380], ret = 4, regs = []}
+D3DDevice_SetRenderState_LogicOp = {sec = "D3D", k = [0x417BC, 0x817BC], ret = 4, regs = []}
+D3DDevice_SetRenderState_MultiSampleAntiAlias = {sec = "D3D", k = [0x41D7C], ret = 4, regs = []}
+D3DDevice_SetRenderState_MultiSampleMask = {sec = "D3D", k = [0x41D7C], ret = 4, regs = []}
+D3DDevice_SetRenderState_MultiSampleMode = {sec = "D3D", k = [0x1A04, 0x1A14], ret = 4, regs = []}
+D3DDevice_SetRenderState_MultiSampleRenderTargetMode = {sec = "D3D", k = [0x1A04, 0x1A14], ret = 4, regs = []}
+D3DDevice_SetRenderState_NormalizeNormals = {sec = "D3D", k = [0x200, 0x403A4], ret = 4, regs = []}
+D3DDevice_SetRenderState_OcclusionCullEnable = {sec = "D3D", k = [0x1E00, 0x41D84], ret = 4, regs = []}
+D3DDevice_SetRenderState_PSTextureModes = {sec = "D3D", k = [0x790, 0x4000], ret = 4, regs = []}
+D3DDevice_SetRenderState_RopZCmpAlwaysRead = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_SetRenderState_RopZRead = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_SetRenderState_SampleAlpha = {sec = "D3D", k = [0x41D7C], ret = 4, regs = []}
+D3DDevice_SetRenderState_ShadowFunc = {sec = "D3D", k = [0x41E6C, 0xFFFFFE00], ret = 4, regs = []}
+D3DDevice_SetRenderState_Simple = {sec = "D3D", ret = 0, regs = ["ecx", "edx"]}
+D3DDevice_SetRenderState_StencilCullEnable = {sec = "D3D", k = [0x1E00, 0x41D84], ret = 4, regs = []}
+D3DDevice_SetRenderState_StencilEnable = {sec = "D3D", k = [0x1A08, 0x1E00, 0x4032C, 0x4032C, 0x41D84], ret = 4, regs = []}
+D3DDevice_SetRenderState_StencilFail = {sec = "D3D", k = [0x1E00, 0x40370, 0x41D84], ret = 4, regs = []}
+D3DDevice_SetRenderState_TextureFactor = {sec = "D3D", k = [0x784, 0x400A60], ret = 4, regs = []}
+D3DDevice_SetRenderState_TwoSidedLighting = {sec = "D3D", k = [0x9000, 0x417C4, 0x8038C], ret = 4, regs = []}
+D3DDevice_SetRenderState_VertexBlend = {sec = "D3D", k = [0x200, 0x40328], ret = 4, regs = []}
+D3DDevice_SetRenderState_YuvEnable = {sec = "D3D", ret = 4, regs = []}
+D3DDevice_SetRenderState_ZEnable = {sec = "D3D", k = [0x1A08, 0x4030C, 0x41D78], ret = 4, regs = []}
+D3DDevice_SetRenderStateNotInline = {sec = "D3D", k = [0x5C, 0x88], ret = 8, regs = []}
+D3DDevice_SetRenderTarget = {sec = "D3D", k = [0x948, 0x94C, 0x94C, 0x1A04, 0x1A04, 0x1A04, 0x1A04, 0x1A08, 0x1A08, 0x1A08, 0x1A08, 0x1A08, 0x1A0C, 0x1A14, 0xFFFF, 0x40100, 0x40110, 0x40130, 0x4020C, 0x40210, 0x40214, 0x4030C, 0x4032C, 0xFFFFFEFF], ret = 8, regs = []}
+D3DDevice_SetScissors = {sec = "D3D", k = [0x954, 0x954, 0x958, 0x958, 0x95C, 0x960, 0xEE0, 0xEE0, 0xEE4, 0xEE4, 0xEE8, 0xEE8, 0xEEC, 0xEEC, 0x1B80, 0x1C00, 0x1C04, 0x402B4, 0x402B4, 0x402C0, 0x402E0, 0x402E0, 0x80200, 0x80200], ret = 12, regs = []}
+D3DDevice_SetScreenSpaceOffset = {sec = "D3D", k = [0xEF8, 0xEFC], ret = 8, regs = []}
+D3DDevice_SetShaderConstantMode = {sec = "D3D", k = [0x44, 0x88, 0xCC, 0x110, 0x114, 0x118, 0x11C, 0x120, 0x124, 0x128, 0x12C, 0x130, 0x134, 0x138, 0x200, 0x1600, 0x1928, 0x41EA4, 0x1009D0, 0x100A50, 0x300B80, 0x3F800000, 0xFFFFFDFF], ret = 4, regs = []}
+D3DDevice_SetSoftDisplayFilter = {sec = "D3D", k = [0x1C28], ret = 4, regs = []}
+D3DDevice_SetStreamSource = {sec = "D3D", k = [0x40, 0x70, 0x80000, 0xFFF80000], ret = 12, regs = []}
+D3DDevice_SetTexture = {sec = "D3D", k = [0x774, 0x800, 0xF88, 0xF88, 0xFFF, 0xFFF, 0x206C, 0x20F4, 0x2A00, 0x3100, 0x4000, 0x4800, 0xFF00, 0x41B0C, 0x41B0C, 0x41B10, 0x41B1C, 0x80000, 0x40000000, 0x80000000, 0xFFF80000, 0xFFFFDFFF], ret = 8, regs = []}
+D3DDevice_SetTextureStageStateNotInline = {sec = "D3D", k = [0x480F, 0xFFFFBFF1], ret = 12, regs = []}
+D3DDevice_SetTextureState_BorderColor = {sec = "D3D", k = [0x41B24], ret = 8, regs = []}
+D3DDevice_SetTextureState_BumpEnv = {sec = "D3D", k = [0x784, 0x41AD0], ret = 12, regs = []}
+D3DDevice_SetTextureState_ColorKeyColor = {sec = "D3D", k = [0x40AE0], ret = 8, regs = []}
+D3DDevice_SetTextureState_TexCoordIndex = {sec = "D3D", k = [0x200, 0x47F, 0x950, 0x950, 0x950, 0x2400, 0x2401, 0x8511, 0x8512, 0xC03C, 0x30000, 0x41964, 0xFF000000, 0xFFFF0000], ret = 8, regs = []}
+D3DDevice_SetTile = {sec = "D3D", regs = []}
+D3DDevice_SetTransform = {sec = "D3D", k = [0x44, 0x44, 0x44, 0x44, 0x44, 0x93C, 0x93C, 0x940, 0x940, 0x940, 0x944, 0xC60, 0x3F800000], ret = 8, regs = []}
+D3DDevice_SetVertexShader = {sec = "D3D", k = [0x70, 0x400, 0x794, 0x794, 0x798, 0x79C, 0x1600, 0x4194C, 0x41950, 0x4195C, 0x41960, 0x41E94, 0x41EA0, 0x81E94], ret = 4, regs = []}
+D3DDevice_SetVertexShaderConstant1 = {sec = "D3D", k = [0x41EA4, 0x100B80], ret = 0, regs = ["ecx", "edx"]}
+D3DDevice_SetVertexShaderConstant1Fast = {sec = "D3D", k = [0x41EA4, 0x100B80], ret = 0, regs = ["ecx", "edx"]}
+D3DDevice_SetVertexShaderConstant4 = {sec = "D3D", k = [0x4C, 0x41EA4], ret = 0, regs = ["ecx", "edx"]}
+D3DDevice_SetVertexShaderConstantNotInlineFast = {sec = "D3D", k = [0x40, 0x40, 0x44, 0x60, 0xB80, 0x41EA4, 0x400B80], ret = 4, regs = ["ecx", "edx"]}
+D3DDevice_SetViewport = {sec = "D3D", k = [0x100, 0x954, 0x958, 0x95C, 0x95C, 0x960, 0x960, 0xEE0, 0xEE4, 0xEE8, 0xEEC, 0xEF0, 0xEF4, 0xFFF, 0xFFF, 0xFFF, 0xFFF, 0x1A04, 0x1A14, 0x1A18], ret = 4, regs = []}
+D3DDevice_Swap = {sec = "D3D", k = [0x40, 0x8D4, 0x8D4, 0x8D8, 0x8D8, 0x1974, 0x1974, 0x2478, 0x2478, 0x2478, 0x2478, 0x2478], ret = 4, regs = []}
+D3DDevice_SwitchTexture = {sec = "D3D", ret = 4, regs = ["ecx", "edx"]}
+D3DResource_BlockUntilNotBusy = {sec = "D3D", xtlid = 0x8006A, regs = []}
+D3DResource_IsBusy = {sec = "D3D", xtlid = 0x8006F, k = [0x50000, 0x50000, 0x70000, 0x70000], ret = 4, regs = []}
+Direct3D_CreateDevice = {sec = "D3D", xtlid = 0x800C5, k = [0x928, 0x8000, 0x80000], ret = 24, regs = []}
+DirectSoundCreate = {sec = "DSOUND", xtlid = 0xB0002, ret = 12, regs = []}
+DirectSoundCreateBuffer = {sec = "DSOUND", xtlid = 0xB0003, ret = 8, regs = []}
+DirectSoundCreateStream = {sec = "DSOUND", xtlid = 0xB0004, ret = 8, regs = []}
+DirectSoundDoWork = {sec = "DSOUND", xtlid = 0xB000F, ret = 0, regs = []}
+DirectSoundUseFullHRTF = {sec = "DSOUND", xtlid = 0xB002F, ret = 0, regs = []}
+DirectSoundUseLightHRTF = {xtlid = 0xB0031}
+getsockname = {sec = "XNET", xtlid = 0x40006, regs = []}
+getsockopt = {sec = "XNET", xtlid = 0x40007, regs = []}
+IDirectSound_CommitDeferredSettings = {sec = "DSOUND", xtlid = 0xB0037, ret = 4, regs = []}
+IDirectSound_CommitEffectData = {xtlid = 0xB0038}
+IDirectSound_CreateSoundBuffer = {sec = "DSOUND", xtlid = 0xB003A, ret = 16, regs = []}
+IDirectSound_DownloadEffectsImage = {xtlid = 0xB003C}
+IDirectSound_EnableHeadphones = {sec = "DSOUND", xtlid = 0xB003D, ret = 8, regs = []}
+IDirectSound_GetEffectData = {xtlid = 0xB003F}
+IDirectSound_GetOutputLevels = {xtlid = 0xB0040}
+IDirectSound_GetSpeakerConfig = {sec = "DSOUND", xtlid = 0xB0041, ret = 8, regs = []}
+IDirectSound_Release = {sec = "DSOUND", xtlid = 0xB0045, ret = 4, regs = []}
+IDirectSound_SetDistanceFactor = {sec = "DSOUND", xtlid = 0xB0048, ret = 12, regs = []}
+IDirectSound_SetDopplerFactor = {sec = "DSOUND", xtlid = 0xB0049, ret = 12, regs = []}
+IDirectSound_SetEffectData = {sec = "DSOUND", xtlid = 0xB004A, ret = 24, regs = []}
+IDirectSound_SetI3DL2Listener = {sec = "DSOUND", xtlid = 0xB004B, ret = 12, regs = []}
+IDirectSound_SetMixBinHeadroom = {sec = "DSOUND", xtlid = 0xB004C, ret = 12, regs = []}
+IDirectSound_SetOrientation = {sec = "DSOUND", xtlid = 0xB004D, ret = 32, regs = []}
+IDirectSound_SetPosition = {sec = "DSOUND", xtlid = 0xB004E, ret = 20, regs = []}
+IDirectSound_SetRolloffFactor = {sec = "DSOUND", xtlid = 0xB004F, ret = 12, regs = []}
+IDirectSound_SetVelocity = {sec = "DSOUND", xtlid = 0xB0050, ret = 20, regs = []}
+IDirectSound_SynchPlayback = {xtlid = 0xB0051}
+IDirectSoundBuffer_GetCurrentPosition = {sec = "DSOUND", xtlid = 0xB0053, ret = 12, regs = []}
+IDirectSoundBuffer_GetStatus = {sec = "DSOUND", xtlid = 0xB0054, ret = 8, regs = []}
+IDirectSoundBuffer_Lock = {sec = "DSOUND", xtlid = 0xB0056, ret = 32, regs = []}
+IDirectSoundBuffer_Pause = {xtlid = 0xB0057}
+IDirectSoundBuffer_Play = {sec = "DSOUND", xtlid = 0xB0059, ret = 16, regs = []}
+IDirectSoundBuffer_PlayEx = {xtlid = 0xB005A}
+IDirectSoundBuffer_Release = {sec = "DSOUND", xtlid = 0xB005D, ret = 4, regs = []}
+IDirectSoundBuffer_SetAllParameters = {xtlid = 0xB005F}
+IDirectSoundBuffer_SetBufferData = {sec = "DSOUND", xtlid = 0xB0060, ret = 12, regs = []}
+IDirectSoundBuffer_SetCurrentPosition = {sec = "DSOUND", xtlid = 0xB0064, ret = 8, regs = []}
+IDirectSoundBuffer_SetFilter = {sec = "DSOUND", xtlid = 0xB0068, ret = 8, regs = []}
+IDirectSoundBuffer_SetFormat = {xtlid = 0xB0069}
+IDirectSoundBuffer_SetFrequency = {sec = "DSOUND", xtlid = 0xB006A, ret = 8, regs = []}
+IDirectSoundBuffer_SetHeadroom = {sec = "DSOUND", xtlid = 0xB006B, ret = 8, regs = []}
+IDirectSoundBuffer_SetI3DL2Source = {sec = "DSOUND", xtlid = 0xB006C, ret = 12, regs = []}
+IDirectSoundBuffer_SetLoopRegion = {sec = "DSOUND", xtlid = 0xB006E, ret = 12, regs = []}
+IDirectSoundBuffer_SetMaxDistance = {sec = "DSOUND", xtlid = 0xB006F, ret = 12, regs = []}
+IDirectSoundBuffer_SetMinDistance = {sec = "DSOUND", xtlid = 0xB0070, ret = 12, regs = []}
+IDirectSoundBuffer_SetMixBins = {sec = "DSOUND", xtlid = 0xB0071, ret = 8, regs = []}
+IDirectSoundBuffer_SetMixBinVolumes = {sec = "DSOUND", xtlid = 0xB0072, ret = 8, regs = []}
+IDirectSoundBuffer_SetOutputBuffer = {xtlid = 0xB0075}
+IDirectSoundBuffer_SetPlayRegion = {xtlid = 0xB0077}
+IDirectSoundBuffer_SetPosition = {sec = "DSOUND", xtlid = 0xB0078, ret = 20, regs = []}
+IDirectSoundBuffer_SetRolloffCurve = {xtlid = 0xB0079}
+IDirectSoundBuffer_SetVelocity = {sec = "DSOUND", xtlid = 0xB007B, ret = 20, regs = []}
+IDirectSoundBuffer_SetVolume = {sec = "DSOUND", xtlid = 0xB007C, ret = 8, regs = []}
+IDirectSoundBuffer_Stop = {sec = "DSOUND", xtlid = 0xB007D, ret = 4, regs = []}
+IDirectSoundBuffer_StopEx = {xtlid = 0xB007E}
+IDirectSoundBuffer_Unlock = {sec = "DSOUND", xtlid = 0xB007F, ret = 20, regs = []}
+IDirectSoundStream_SetEG = {sec = "DSOUND", xtlid = 0xB008C, regs = []}
+ioctlsocket = {sec = "XNET", xtlid = 0x4000B, regs = []}
+listen = {sec = "XNET", xtlid = 0x4000C, regs = []}
+Lock2DSurface = {sec = "D3D", k = [0x40, 0xF0000000], ret = 24, regs = []}
+recv = {sec = "XNET", xtlid = 0x4000F, regs = []}
+recvfrom = {sec = "XNET", xtlid = 0x40010, regs = []}
+select = {sec = "XNET", xtlid = 0x40011, regs = []}
+send = {sec = "XNET", xtlid = 0x40012, regs = []}
+sendto = {sec = "XNET", xtlid = 0x40013, regs = []}
+setsockopt = {sec = "XNET", xtlid = 0x40014, regs = []}
+shutdown = {sec = "XNET", xtlid = 0x40015, regs = []}
+socket = {sec = "XNET", xtlid = 0x40016, regs = []}
+WSACancelOverlappedIO = {sec = "XNET", xtlid = 0x4003B, regs = []}
+WSAGetLastError = {sec = "XNET", xtlid = 0x4001B, regs = []}
+WSAGetOverlappedResult = {sec = "XNET", xtlid = 0x4001E, regs = []}
+WSARecv = {sec = "XNET", xtlid = 0x4001F, regs = []}
+WSARecvFrom = {sec = "XNET", xtlid = 0x40020, regs = []}
+WSASend = {sec = "XNET", xtlid = 0x40022, regs = []}
+WSASendTo = {sec = "XNET", xtlid = 0x40023, regs = []}
+WSAStartup = {sec = "XNET", xtlid = 0x40018, ret = 8, regs = []}
+XAudioDownloadEffectsImage = {sec = "DSOUND", xtlid = 0xB00A6, k = [0xFFFF, 0xFFFF, 0x7FF8FFF2, 0x80070000, 0x80070000, 0x8007000E, 0x88780032], ret = 16, regs = []}
+XInitDevices = {sec = "XPP", k = [0x5C, 0x5D, 0x60, 0x70], ret = 8, regs = []}
+XInputClose = {sec = "XPP", xtlid = 0x10037, ret = 4, regs = []}
+XInputGetState = {sec = "XPP", xtlid = 0x10038, k = [0xA2, 0xA3, 0xA3, 0x48F], ret = 8, regs = []}
+XInputOpen = {sec = "XPP", xtlid = 0x10036, ret = 16, regs = []}
+XInputSetState = {sec = "XPP", xtlid = 0x1003A, k = [0x40, 0x41, 0xA3], ret = 8, regs = []}
+XLaunchNewImageA = {sec = ".text", xtlid = 0x1005A, ret = 8, regs = []}
+XMountUtilityDrive = {sec = ".text", xtlid = 0x10049, k = [0x4000, 0xFFFFFEEC, 0xFFFFFEEC, 0xFFFFFEEC], ret = 4, regs = []}
+XNetCreateKey = {sec = "XNET", xtlid = 0x40029, regs = []}
+XNetDnsLookup = {sec = "XNET", xtlid = 0x40033, k = [0x276D], ret = 12, regs = []}
+XNetDnsRelease = {sec = "XNET", xtlid = 0x40034, regs = []}
+XNetGetEthernetLinkStatus = {sec = ".text", xtlid = 0x4003A, k = [0x24C], ret = 0, regs = []}
+XNetGetTitleXnAddr = {sec = "XNET", xtlid = 0x40038, regs = []}
+XNetInAddrToXnAddr = {sec = "XNET", xtlid = 0x4002E, k = [0x276D], ret = 12, regs = []}
+XNetRandom = {sec = "XNET", xtlid = 0x40028, regs = []}
+XNetRegisterKey = {sec = "XNET", xtlid = 0x4002A, regs = []}
+XNetStartup = {sec = "XNET", xtlid = 0x40026, ret = 4, regs = []}
+XNetUnregisterKey = {sec = "XNET", xtlid = 0x4002B, regs = []}
+XNetXnAddrToInAddr = {sec = "XNET", xtlid = 0x4002C, k = [0x276D], ret = 12, regs = []}
+XOnlineCleanup = {sec = "XONLINE", xtlid = 0x30002, k = [0x1580, 0x80150005], ret = 0, regs = []}
+XOnlineStartup = {sec = "XONLINE", xtlid = 0x30001, k = [0x6E8, 0x1580, 0x8001, 0xFFFF, 0x80004005, 0x80070000, 0x8007000E, 0xFFFFFE70], ret = 4, regs = []}
+
+[anchors]
+CDirectSoundStream_Constructor = {}
+DSound_StreamVtable2_ref = {}
+MU_Init = {}
+
+[data]
+D3D_DeferredTextureState = {in = "D3DDevice_SetTextureStageStateNotInline", insn = 13, op = "disp"}
+D3D_Device = {in = "D3DDevice_SetRenderState_Simple", insn = 0, op = "disp", xtlid = 0x80001}
+D3D_DirtyFlags = {in = "D3DDevice_SelectVertexShader", insn = 11, op = "disp"}
+D3D_IndexData = {in = "D3DDevice_SetIndices", insn = 8, op = "disp"}
+D3D_pDevice = {in = "CDevice_KickOff", insn = 10, op = "disp", xtlid = 0x80003}
+D3D_RenderState = {in = "D3DDevice_SetPixelShader", insn = 63, op = "imm"}
+D3D_SimpleRenderStateEncode = {in = "D3DDevice_SetRenderStateNotInline", insn = 4, op = "disp"}
+D3D_Streams = {in = "D3DDevice_SetStreamSource", insn = 24, op = "disp"}
+DSound_StreamVtable = {in = "CDirectSoundStream_Constructor", insn = 9, op = "imm"}
+DSound_StreamVtable2 = {in = "DSound_StreamVtable2_ref", insn = 7, op = "imm"}
+XPP_GamepadType = {xtlid = 0x1007C}
+XPP_MemoryUnitType = {in = "MU_Init", insn = 27, op = "imm", xtlid = 0x1007E}

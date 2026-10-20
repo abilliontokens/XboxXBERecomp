@@ -473,6 +473,14 @@ bool CodeGen::EmitInteger(uint32_t va, const ZydisDecodedInstruction& in, const 
             Line(F("\tx86_trap(ctx, 0x%X, \"%s\");", va, ZydisMnemonicGetString(m)));
             return true;
         case ZYDIS_MNEMONIC_INT:
+            // DebugService, answered by the kernel rather than by a handler in the image: eax picks the
+            // service, and it returns past the "int 3" that always follows (Analysis::DecodeFlow gives
+            // this instruction that jump). Everything else keeps the privileged no-op below.
+            if (ops[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && ops[0].imm.value.u == 0x2D) {
+                Line(F("\tx86_debug_service(ctx, base, 0x%X);", va));
+                return true;
+            }
+            [[fallthrough]];
         case ZYDIS_MNEMONIC_IN:
         case ZYDIS_MNEMONIC_OUT:
         case ZYDIS_MNEMONIC_CLI:

@@ -48,6 +48,19 @@ using namespace kernel;
 #define SYM_D3DDevice_Reset FFFFFE04
 #define HAS_D3DDevice_Reset 0
 #endif
+// XDK 3925 names, which no later build's config has
+#ifndef SYM_D3DDevice_Present
+#define SYM_D3DDevice_Present FFFFFE05
+#define HAS_D3DDevice_Present 0
+#endif
+#ifndef SYM_D3DDevice_GetBackBuffer
+#define SYM_D3DDevice_GetBackBuffer FFFFFE06
+#define HAS_D3DDevice_GetBackBuffer 0
+#endif
+#ifndef SYM_D3DDevice_GetDepthStencilSurface
+#define SYM_D3DDevice_GetDepthStencilSurface FFFFFE07
+#define HAS_D3DDevice_GetDepthStencilSurface 0
+#endif
 
 namespace d3d {
 
@@ -76,8 +89,8 @@ constexpr uint32_t kDevice = SYM(D3D_Device);        // the static CDevice, g_pD
 constexpr uint32_t kDevicePtr = SYM(D3D_pDevice);
 constexpr uint32_t kIndexData = SYM(D3D_IndexData);  // index data base the inline draws read
 constexpr uint32_t kDirtyFlags = SYM(D3D_DirtyFlags);
-constexpr uint32_t kTextureState = SYM(D3D_DeferredTextureState);  // [4][32]
-constexpr uint32_t kRenderState = SYM(D3D_RenderState);            // [166]
+constexpr uint32_t kTextureState = SYM(D3D_DeferredTextureState);  // [4][32], by title:: type
+constexpr uint32_t kRenderState = SYM(D3D_RenderState);            // [title::kRsMax], by title:: index
 constexpr uint32_t kStreams = SYM(D3D_Streams);                    // [16] stride, offset, buffer
 constexpr uint32_t kSimpleEncode = SYM(D3D_SimpleRenderStateEncode);
 
@@ -91,6 +104,109 @@ constexpr uint32_t kDevPush = XDK_CDevice_Push, kDevThreshold = XDK_CDevice_Push
                    kDevSuperY = XDK_CDevice_SuperSampleY, kDevTransforms = XDK_CDevice_Transforms,
                    kDevPalettes = XDK_CDevice_Palettes;
 constexpr uint32_t kStageStates = XDK_TextureState_Stage, kStreamSize = XDK_Stream_Size;
+
+// The title's D3D_RenderState and D3D_DeferredTextureState are indexed by its build's numbering of the states, g_state
+// and the renderer by the host's (gpu::kRs*, gpu::kTss*: XDK 5849's), and a build's config may number them otherwise
+// (xdk/layout.h). Whatever reads or writes those two arrays maps between the numberings here, and a state one side has
+// no number for is never written on the other. With 5849's numbering every map is the identity.
+namespace title {
+// D3D_RenderState: simple states below kRsDeferredFirst, deferred ones below kRsComplexFirst, complex ones below
+// kRsMax; D3D_DeferredTextureState: deferred types below kTssDeferredMax
+constexpr uint32_t kRsDeferredFirst = XDK_RENDER_STATE(DeferredFirst),
+                   kRsComplexFirst = XDK_RENDER_STATE(ComplexFirst), kRsMax = XDK_RENDER_STATE(Max),
+                   kTssDeferredMax = XDK_TEXTURE_STATE(DeferredMax);
+}  // namespace title
+static_assert(title::kRsDeferredFirst <= title::kRsComplexFirst && title::kRsComplexFirst <= title::kRsMax &&
+                  title::kTssDeferredMax <= gpu::kTssCount,
+              "the config's RenderState_ or TextureState_ bounds are out of order");
+
+// a state's number in the host's numbering and in the build's, xdk::kAbsent when the build has no such state
+struct StatePair {
+    uint32_t host, title;
+};
+constexpr StatePair kRsPairs[] = {
+#define RS_PAIR(name) {gpu::kRs##name, XDK_RENDER_STATE(name)},
+    GPU_RENDER_STATES(RS_PAIR)
+#undef RS_PAIR
+};
+constexpr StatePair kTssPairs[] = {
+#define TSS_PAIR(name) {gpu::kTss##name, XDK_TEXTURE_STATE(name)},
+    GPU_TEXTURE_STAGE_STATES(TSS_PAIR)
+#undef TSS_PAIR
+};
+
+// The build's number of each host one (title) and the host's of each of the build's (host), xdk::kAbsent where the
+// other side has none. A build with the host's bounds that numbers every named state as the host does gets the
+// identity, the unnamed slots between the named ones included.
+template <size_t HostN, size_t TitleN>
+struct StateMap {
+    std::array<uint32_t, HostN> title{};
+    std::array<uint32_t, TitleN> host{};
+    bool valid = true;  // no number of the build's past its table or given twice
+};
+template <size_t HostN, size_t TitleN, size_t N>
+constexpr StateMap<HostN, TitleN> MakeStateMap(const StatePair (&pairs)[N], bool same_bounds) {
+    StateMap<HostN, TitleN> m;
+    m.title.fill(xdk::kAbsent);
+    m.host.fill(xdk::kAbsent);
+    bool same = same_bounds;
+    for (const StatePair& p : pairs) same = same && p.title == p.host;
+    if (same) {
+        for (uint32_t i = 0; i < std::min(HostN, TitleN); i++) m.title[i] = m.host[i] = i;
+        return m;
+    }
+    for (const StatePair& p : pairs) {
+        if (p.title == xdk::kAbsent) continue;
+        if (p.title >= TitleN || m.host[p.title] != xdk::kAbsent) {
+            m.valid = false;
+            continue;
+        }
+        m.title[p.host] = p.title;
+        m.host[p.title] = p.host;
+    }
+    return m;
+}
+constexpr auto kRsMap = MakeStateMap<gpu::kRsMax, title::kRsMax>(
+    kRsPairs, title::kRsDeferredFirst == gpu::kRsDeferredFirst && title::kRsComplexFirst == gpu::kRsComplexFirst &&
+                  title::kRsMax == gpu::kRsMax);
+constexpr auto kTssMap =
+    MakeStateMap<gpu::kTssCount, gpu::kTssCount>(kTssPairs, title::kTssDeferredMax == gpu::kTssDeferredMax);
+static_assert(kRsMap.valid, "a RenderState_ number in the config is not below RenderState_Max, or is given twice");
+static_assert(kTssMap.valid, "a TextureState_ number in the config is not below 32, or is given twice");
+
+// The slots of a block of the build's from first that have a host number, in runs consecutive in both numberings,
+// which copy whole: with the host's numbering the block is one run.
+struct Run {
+    uint32_t title, host, count;
+};
+template <size_t N>
+struct Runs {
+    std::array<Run, N> run{};
+    size_t n = 0;
+    constexpr const Run* begin() const { return run.data(); }
+    constexpr const Run* end() const { return run.data() + n; }
+};
+template <size_t N, size_t TitleN>
+constexpr Runs<N> MakeRuns(const std::array<uint32_t, TitleN>& host, uint32_t first) {
+    Runs<N> r;
+    for (uint32_t t = first; t < first + N; t++) {
+        uint32_t h = host[t];
+        if (h == xdk::kAbsent) continue;
+        if (r.n) {
+            Run& last = r.run[r.n - 1];
+            if (last.title + last.count == t && last.host + last.count == h) {
+                last.count++;
+                continue;
+            }
+        }
+        r.run[r.n++] = {t, h, 1};
+    }
+    return r;
+}
+// the deferred blocks, which the title's inline SetRenderState and SetTextureStageState write
+constexpr auto kRsDeferred =
+    MakeRuns<title::kRsComplexFirst - title::kRsDeferredFirst>(kRsMap.host, title::kRsDeferredFirst);
+constexpr auto kTssDeferred = MakeRuns<title::kTssDeferredMax>(kTssMap.host, 0);
 
 // The title's state. g_state is const here: every write goes through Set, Load or Refresh, which mark the 64 byte
 // blocks they write (gpu::State::Mark). The render thread's recorder compares only marked blocks with what it sent,
@@ -211,10 +327,10 @@ uint32_t NewSurface(uint32_t w, uint32_t h, uint32_t fmt, uint32_t bpp) {
 
 void SyncDeferred() {
     // deferred states live in the title's memory, the inline SetRenderState and SetTextureStageState write them
-    Refresh(&g_state.rs[gpu::kRsDeferredFirst], kRenderState + gpu::kRsDeferredFirst * 4,
-            (gpu::kRsComplexFirst - gpu::kRsDeferredFirst) * 4);
+    for (const Run& r : kRsDeferred) Refresh(&g_state.rs[r.host], kRenderState + r.title * 4, r.count * 4);
     for (uint32_t s = 0; s < 4; s++)
-        Refresh(g_state.tss[s].data(), kTextureState + s * kStageStates * 4, gpu::kTssBumpEnvMat00 * 4);
+        for (const Run& r : kTssDeferred)
+            Refresh(&g_state.tss[s][r.host], kTextureState + (s * kStageStates + r.title) * 4, r.count * 4);
 }
 
 float ZScale(const gpu::Surface& zs) {
@@ -294,9 +410,11 @@ void SetMultiSampleType(uint32_t type) {
 // The render target's SuperSampleScale as the library's render target setup (5558: 0x24AAC0) keeps it: the
 // presentation's when the target is the device's back buffer, 1 on any other surface. Into the device, where the
 // library's own viewport, scissor and clear code reads it, and into g_state for the renderer. The title's surfaces
-// stay the frame's size: only screen space positions are in the larger pixels.
+// stay the frame's size: only screen space positions are in the larger pixels. A device without a BackBuffer field
+// (3925's holds its frame buffer surfaces themselves) is compared with g_buffers[1], what SetupPresentation puts there.
 void UpdateSuperSample() {
-    bool back = Dev(kDevRenderTarget) == Dev(kDevBackBuffer);
+    uint32_t back_buffer = kDevBackBuffer != xdk::kUnknown ? Dev(kDevBackBuffer) : g_buffers[1];
+    bool back = Dev(kDevRenderTarget) == back_buffer;
     float x = back ? float(g_super_x) : 1.0f, y = back ? float(g_super_y) : 1.0f;
     std::memcpy(HostPtr(kDevice + kDevSuperX), &x, 4);
     std::memcpy(HostPtr(kDevice + kDevSuperY), &y, 4);
@@ -379,9 +497,11 @@ void UpdateViewportConstants() {
     }
 }
 
+// rs by the host's number; the title's table has it at the build's, unless the build has no such state
 void SetComplex(uint32_t rs, uint32_t v) {
     Set(g_state.rs[rs], v);
-    W32(kRenderState + rs * 4, v);
+    if (uint32_t at = kRsMap.title[rs]; at != xdk::kAbsent) W32(kRenderState + at * 4, v);
+    else LOG_FIRST(8, "d3d: render state %u is not in this build, the title's D3D_RenderState is left alone", rs);
 }
 
 // The library's default render and texture stage states; its pushes land in the scratch buffer
@@ -478,8 +598,10 @@ void SetupPresentation(X86Context& ctx, uint32_t w, uint32_t h, uint32_t fmt, ui
     Set(g_state.viewport, {0, 0, w, h, 0.0f, 1.0f});
     SetDev(kDevRenderTarget, g_buffers[1]);
     SetDev(kDevDepth, g_depth);
-    SetDev(kDevBackBuffer, g_buffers[1]);
-    SetDev(kDevFrontBuffer, g_buffers[1]);
+    // the frame buffer pointers, where the device has them: 3925's holds the surfaces themselves, which a pointer
+    // written there would overwrite
+    if (kDevBackBuffer != xdk::kUnknown) SetDev(kDevBackBuffer, g_buffers[1]);
+    if (kDevFrontBuffer != xdk::kUnknown) SetDev(kDevFrontBuffer, g_buffers[1]);
     float one = 1.0f, zs = g_depth && (R32(g_depth + 12) >> 8 & 0xFF) == 0x30 ? 65535.0f : 16777215.0f;
     std::memcpy(HostPtr(kDevice + kDevZScale), &zs, 4);
     // fields the library's init sets that inlined library code and the default states read
@@ -516,10 +638,9 @@ HLE_STDCALL(Direct3D_CreateDevice, 6) {
     XDK_REQUIRE("d3d", XDK_KEY(CDevice_Push), XDK_KEY(CDevice_PushThreshold), XDK_KEY(CDevice_BaseVertex),
                 XDK_KEY(CDevice_IndexBuffer), XDK_KEY(CDevice_ZScale), XDK_KEY(CDevice_SuperSampleX),
                 XDK_KEY(CDevice_SuperSampleY), XDK_KEY(CDevice_Transforms), XDK_KEY(CDevice_Textures),
-                XDK_KEY(CDevice_RenderTarget), XDK_KEY(CDevice_Depth), XDK_KEY(CDevice_BackBuffer),
-                XDK_KEY(CDevice_FrontBuffer), XDK_KEY(CDevice_SwapCount), XDK_KEY(CDevice_Size),
-                XDK_KEY(DirtyFlags_Texture), XDK_KEY(TextureState_Stage), XDK_KEY(Stream_Size),
-                XDK_KEY(Stream_Stride), XDK_KEY(Stream_Buffer));
+                XDK_KEY(CDevice_RenderTarget), XDK_KEY(CDevice_Depth), XDK_KEY(CDevice_SwapCount),
+                XDK_KEY(CDevice_Size), XDK_KEY(DirtyFlags_Texture), XDK_KEY(TextureState_Stage),
+                XDK_KEY(Stream_Size), XDK_KEY(Stream_Stride), XDK_KEY(Stream_Buffer));
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     uint32_t pp = a[4];  // D3DPRESENT_PARAMETERS
     uint32_t w = R32(pp), h = R32(pp + 4), fmt = R32(pp + 8), count = std::max<uint32_t>(R32(pp + 12), 1);
@@ -712,11 +833,27 @@ HLE_STDCALL(D3DDevice_SetRenderTarget, 2) {
     return 0;
 }
 
-HLE_STDCALL(D3DDevice_GetBackBuffer2, 1) {
-    int32_t i = int32_t(a[0]);
+namespace {
+// the surface GetBackBuffer2 returns for an index, -1 the front buffer, with a reference added
+uint32_t BackBufferRef(int32_t i) {
     uint32_t s = i < 0 ? g_buffers[0] : g_buffers[std::min<uint32_t>(uint32_t(i) + 1, g_buffer_count - 1)];
     W32(s, R32(s) + 1);
     return s;
+}
+// the depth surface GetDepthStencilSurface2 returns, with a reference added when there is one
+uint32_t DepthStencilRef() {
+    uint32_t s = Dev(kDevDepth);
+    if (s) W32(s, R32(s) + 1);
+    return s;
+}
+}  // namespace
+
+HLE_STDCALL(D3DDevice_GetBackBuffer2, 1) { return BackBufferRef(int32_t(a[0])); }
+
+// GetBackBuffer(BackBuffer, Type, ppSurface), XDK 3925's form: the same surface through the pointer, and S_OK
+HLE_STDCALL(D3DDevice_GetBackBuffer, 3) {
+    W32(a[2], BackBufferRef(int32_t(a[0])));
+    return 0;
 }
 
 HLE_STDCALL(D3DDevice_GetRenderTarget2, 0) {
@@ -725,17 +862,22 @@ HLE_STDCALL(D3DDevice_GetRenderTarget2, 0) {
     return s;
 }
 
-HLE_STDCALL(D3DDevice_GetDepthStencilSurface2, 0) {
-    uint32_t s = Dev(kDevDepth);
-    if (s) W32(s, R32(s) + 1);
-    return s;
+HLE_STDCALL(D3DDevice_GetDepthStencilSurface2, 0) { return DepthStencilRef(); }
+
+// GetDepthStencilSurface(ppSurface), XDK 3925's form: the same surface through the pointer, and S_OK, or
+// D3DERR_NOTFOUND with NULL stored when the device has none, as the library does it
+HLE_STDCALL(D3DDevice_GetDepthStencilSurface, 1) {
+    uint32_t s = DepthStencilRef();
+    W32(a[0], s);
+    return s ? 0 : 0x88760866;  // D3DERR_NOTFOUND
 }
 
 namespace {
 std::atomic<uint32_t> g_presents{0};
-}  // namespace
 
-HLE_STDCALL(D3DDevice_Swap, 1) {
+// One frame to the window, shared by D3DDevice_Swap and XDK 3925's D3DDevice_Present (name, for the log): the gamma
+// ramp left pending, the back buffer shown, the frame buffers' memory rotated, the swap count incremented and returned.
+uint32_t PresentFrame(const char* name) {
     app::SplashFirstFrame();
     // handed over from the previous instance: the window opens on the second frame, the first picture with
     // anything drawn over it right after
@@ -748,7 +890,7 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
     }
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     g_presents++;
-    LOG_FIRST(8, "d3d: Swap %u", g_presents.load());
+    LOG_FIRST(8, "d3d: %s %u", name, g_presents.load());
     // the kept display is shown until the title presents its own
     kernel::SetSavedDataAddress(0);
     // the ramp an inlined SetGammaRamp left for the vertical blank that shows this swap
@@ -778,6 +920,17 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
     uint32_t n = Dev(kDevSwapCount) + 1;
     SetDev(kDevSwapCount, n);
     return n;
+}
+}  // namespace
+
+HLE_STDCALL(D3DDevice_Swap, 1) { return PresentFrame("Swap"); }
+
+// Present(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion), how XDK 3925 presents: it has no Swap. The
+// same frame as Swap's, the arguments ignored as Swap's flags are, and S_OK, the HRESULT the library's own body
+// leaves in eax whenever no display mode change is pending.
+HLE_STDCALL(D3DDevice_Present, 4) {
+    PresentFrame("Present");
+    return 0;
 }
 
 HLE_STDCALL(D3DDevice_Clear, 6) {
@@ -825,13 +978,19 @@ HLE_FASTCALL(D3DDevice_SetRenderState_Simple, 0) {
 }
 
 HLE_STDCALL(D3DDevice_SetRenderStateNotInline, 2) {
-    uint32_t rs = a[0], v = a[1];
-    if (rs < gpu::kRsDeferredFirst) {
+    uint32_t rs = a[0], v = a[1];  // rs by the build's number
+    if (rs < title::kRsDeferredFirst) {
         uint32_t method = R32(kSimpleEncode + rs * 4) & 0x1FFC;
         Set(g_state.simple[method >> 2], v);
         W32(kRenderState + rs * 4, v);  // titles read their states back from the library's table
-    } else if (rs < gpu::kRsMax) {
-        SetComplex(rs, v);
+    } else if (rs < title::kRsMax) {
+        if (uint32_t host = kRsMap.host[rs]; host != xdk::kAbsent) {
+            SetComplex(host, v);
+        } else {
+            // a state the host has no number for (3925's D3DRS_MULTISAMPLETYPE): only the library's table keeps it
+            W32(kRenderState + rs * 4, v);
+            LOG_FIRST(8, "d3d: render state %u of this build has no host meaning, it is only stored", rs);
+        }
     }
     return 0;
 }
@@ -872,12 +1031,15 @@ COMPLEX_STATE(RopZRead, gpu::kRsRopZRead)
 COMPLEX_STATE(DoNotCullUncompressed, gpu::kRsDoNotCullUncompressed)
 
 HLE_STDCALL(D3DDevice_SetTextureState_TexCoordIndex, 2) {
-    Set(g_state.tss[a[0] & 3][gpu::kTssTexCoordIndex], a[1]);
-    W32(kTextureState + ((a[0] & 3) * kStageStates + gpu::kTssTexCoordIndex) * 4, a[1]);
+    constexpr uint32_t type = kTssMap.title[gpu::kTssTexCoordIndex];  // the build's
+    uint32_t stage = a[0] & 3;
+    Set(g_state.tss[stage][gpu::kTssTexCoordIndex], a[1]);
+    if (type != xdk::kAbsent) W32(kTextureState + (stage * kStageStates + type) * 4, a[1]);
     return 0;
 }
 HLE_STDCALL(D3DDevice_SetTextureState_BumpEnv, 3) {
-    if (a[1] >= gpu::kTssBumpEnvMat00 && a[1] <= gpu::kTssBumpEnvLOffset) Set(g_state.tss[a[0] & 3][a[1]], a[2]);
+    uint32_t type = a[1] < gpu::kTssCount ? kTssMap.host[a[1]] : xdk::kAbsent;  // the host's number of the build's
+    if (type >= gpu::kTssBumpEnvMat00 && type <= gpu::kTssBumpEnvLOffset) Set(g_state.tss[a[0] & 3][type], a[2]);
     return 0;
 }
 HLE_STDCALL(D3DDevice_SetTextureState_BorderColor, 2) {
@@ -889,9 +1051,10 @@ HLE_STDCALL(D3DDevice_SetTextureState_ColorKeyColor, 2) {
     return 0;
 }
 HLE_STDCALL(D3DDevice_SetTextureStageStateNotInline, 3) {
-    uint32_t stage = a[0] & 3, type = a[1], v = a[2];
+    uint32_t stage = a[0] & 3, type = a[1], v = a[2];  // type by the build's number
     if (type < gpu::kTssCount) {
-        Set(g_state.tss[stage][type], v);
+        if (uint32_t host = kTssMap.host[type]; host != xdk::kAbsent) Set(g_state.tss[stage][host], v);
+        else LOG_FIRST(8, "d3d: texture stage state %u of this build has no host meaning, it is only stored", type);
         W32(kTextureState + (stage * kStageStates + type) * 4, v);
     }
     return 0;
