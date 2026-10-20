@@ -248,6 +248,10 @@ uint32_t g_depth = 0;
 uint32_t g_frame_w = 640, g_frame_h = 480;  // the console's frame, what the title asked CreateDevice for
 uint32_t g_scratch_push = 0, g_scratch_size = 0;
 uint32_t g_walk = 0;  // first scratch command not read yet
+// The NV2A's own vertex-constant load register. kVscPush sets it and every constant packet advances
+// it, exactly as the hardware does, because an upload longer than the 32 dwords one packet carries
+// arrives as several packets and only the first is preceded by its kVscPush header.
+uint32_t g_vsc_reg = 0;
 
 uint32_t Dev(uint32_t off) { return R32(kDevice + off); }
 void SetDev(uint32_t off, uint32_t v) { W32(kDevice + off, v); }
@@ -1484,15 +1488,25 @@ void EndPrimitive() {
 void Walk(uint32_t end) {
     if (!g_walk || end < g_walk || end > g_scratch_push + g_scratch_size) return;
     for (uint32_t p = g_walk; p + 4 <= end;) {
-        // vertex shader constants pushed inline (the library's Constant1Fast and the
-        // engine's own writer at 0x1DF070): [0x41EA4, register + 96, (dwords << 18) | 0xB80, data...].
-        // Without this the values never reach g_state.vsc and shaders that scale by
-        // c97/c98 (D3D registers 1/2) collapse every vertex to the origin.
-        if (R32(p) == kVscPush && p + 12 <= end) {
-            uint32_t reg = R32(p + 4), hdr = R32(p + 8), n = hdr >> 18;
-            if ((hdr & 0x1FFC) == kVscMethod && p + 12 + n * 4 <= end) {
-                StoreVsConstants(reg, n, p + 12);
-                p += 12 + n * 4;
+        // Vertex shader constants pushed inline (the library's Constant1Fast and the engine's own
+        // writers): [0x41EA4, register + 96] sets the load register, then one or more
+        // [(dwords << 18) | 0xB80, data...] packets write from it, the register advancing by one per
+        // four dwords. One packet carries at most the 32 dwords of methods 0xB80..0xBFC, so anything
+        // longer than eight registers - a skinning palette is tens of them - arrives as several
+        // packets and only the first follows a 0x41EA4. Treating the header as mandatory dropped every
+        // continuation into the generic path below, which logs and discards it: the world's four
+        // register transform survived and skinned characters lost all but their first eight.
+        if (R32(p) == kVscPush && p + 8 <= end) {
+            g_vsc_reg = R32(p + 4);
+            p += 8;
+            continue;
+        }
+        if (uint32_t h = R32(p); (h & 0x1FFC) == kVscMethod && !(h & 0x40000000)) {
+            uint32_t n = (h >> 18) & 0x7FF;
+            if (p + 4 + n * 4 <= end) {
+                StoreVsConstants(g_vsc_reg, n, p + 4);
+                g_vsc_reg += n / 4;
+                p += 4 + n * 4;
                 continue;
             }
         }
