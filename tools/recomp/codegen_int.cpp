@@ -415,13 +415,25 @@ bool CodeGen::EmitInteger(uint32_t va, const ZydisDecodedInstruction& in, const 
         case ZYDIS_MNEMONIC_CLD: Line("\tctx.df = 0;"); return true;
         case ZYDIS_MNEMONIC_STD: Line("\tctx.df = 1;"); return true;
 
-        case ZYDIS_MNEMONIC_PUSH:
-            if (ops[0].size == 16 && ops[0].type != ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+        case ZYDIS_MNEMONIC_PUSH: {
+            // A segment register is only 16 bits wide, and Zydis reports it so, but in 32-bit code a
+            // "push Sreg" stores a full doubleword, the selector in its low word: 1E/06/0E/16/1E/0FA0
+            // and 0FA8 all decrement esp by 4 (SDM, PUSH - Push Operand onto the Stack). Emitting a
+            // 2-byte push here while "pop Sreg" (below) adds 4 left esp 2 bytes high per pair, and the
+            // pops that follow then read the wrong slots, so a guest prologue that saves registers with
+            // push ds/push es in the middle hands back shifted values. Bink's CPU check does exactly
+            // that, and the shifted pop edi was the first visible symptom of this in Fuzion Frenzy.
+            bool sreg = ops[0].type == ZYDIS_OPERAND_TYPE_REGISTER && ops[0].reg.value >= ZYDIS_REGISTER_ES &&
+                        ops[0].reg.value <= ZYDIS_REGISTER_GS;
+            if (sreg) {
+                emit(F("uint32_t v = (uint32_t)(%s); X86_PUSH32(v);", Read(ops[0], ea).c_str()));
+            } else if (ops[0].size == 16 && ops[0].type != ZYDIS_OPERAND_TYPE_IMMEDIATE) {
                 emit(F("uint16_t v = (uint16_t)(%s); ctx.esp -= 2; X86_MEM16(ctx.esp) = v;", Read(ops[0], ea).c_str()));
             } else {
                 emit(F("uint32_t v = (uint32_t)(%s); X86_PUSH32(v);", Read(ops[0], ea).c_str()));
             }
             return true;
+        }
         case ZYDIS_MNEMONIC_POP:
             if (ops[0].type == ZYDIS_OPERAND_TYPE_REGISTER && ops[0].reg.value >= ZYDIS_REGISTER_ES && ops[0].reg.value <= ZYDIS_REGISTER_GS) {
                 Line("\tctx.esp += 4;");

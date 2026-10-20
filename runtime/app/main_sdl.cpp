@@ -21,6 +21,7 @@
 #include <thread>
 
 #include <unistd.h>
+#include <ucontext.h>
 
 #include "app/app.h"
 #include "app/platform.h"
@@ -31,6 +32,7 @@
 #include "gpu/vulkan.h"
 #include "image_symbols.h"
 #include "kernel/kernel.h"
+#include "kernel/memory.h"
 
 namespace app {
 
@@ -109,7 +111,24 @@ void DumpThreads() {
 // No minidump on Linux: the guest registers and return addresses go to the
 // log, then the process dies with the signal, as the Windows filter leaves
 // it to the system after writing its dump.
-void CrashHandler(int sig) {
+// No minidump on Linux: the guest registers and return addresses go to the
+// log, then the process dies with the signal, as the Windows filter leaves
+// it to the system after writing its dump. The fault address is logged too:
+// a guest register dump alone cannot say whether a bad pointer is guest
+// memory (and therefore the title's own fault) or a host pointer the runtime
+// handed back, and two of this port's early crashes needed that distinction.
+// A guest address is printed as its offset into the 4 GB guest reservation.
+// Requires SA_SIGINFO, so it is installed with sigaction below rather than
+// std::signal.
+void CrashHandler(int sig, siginfo_t* info, void* uc) {
+    const void* at = info ? info->si_addr : nullptr;
+    const uint8_t* base = mem::Base();
+    if (at && base) {
+        const uint8_t* p = static_cast<const uint8_t*>(at);
+        if (p >= base && p < base + (size_t{1} << 32))
+            LOGE("fault at guest address %08X (host %p)", uint32_t(p - base), at);
+    }
+    if (uc) LOGE("host faulting instruction %p", reinterpret_cast<void*>(uintptr_t(reinterpret_cast<ucontext_t*>(uc)->uc_mcontext.gregs[REG_RIP])));
     if (kernel::Thread* t = kernel::Current(); t && t->ctx) {
         LOGE("signal %d on guest thread %X", sig, t->id);
         kernel::LogGuestStack(*t->ctx, 256);
@@ -117,7 +136,9 @@ void CrashHandler(int sig) {
         LOGE("signal %d", sig);
     }
     logx::Flush();
-    std::signal(sig, SIG_DFL);
+    struct sigaction dfl{};
+    dfl.sa_handler = SIG_DFL;
+    sigaction(sig, &dfl, nullptr);
     std::raise(sig);
     _exit(128 + sig);
 }
@@ -388,7 +409,12 @@ HdrInfo QueryHdr() {
 int main(int argc, char** argv) {
     app::g_argc = argc;
     app::g_argv = argv;
-    for (int sig : {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE}) std::signal(sig, app::CrashHandler);
+    // SA_SIGINFO so CrashHandler receives the fault address (see above); sigaction rather than
+    // std::signal, because only the former can ask for it.
+    struct sigaction crash{};
+    crash.sa_sigaction = &app::CrashHandler;
+    crash.sa_flags = SA_SIGINFO;
+    for (int sig : {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE}) sigaction(sig, &crash, nullptr);
     // One log a session: a relaunch into another image carries on its predecessor's.
     bool relaunched = app::Relaunched();
     std::string log = app::kGame.log;
