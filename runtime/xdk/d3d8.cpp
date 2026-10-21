@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <cmath>
 #include <map>
 #include <thread>
@@ -134,10 +135,15 @@ uint32_t g_scratch_push = 0, g_scratch_size = 0;
 uint32_t g_walk = 0;  // first scratch command not read yet
 // D3DCALLBACK_WRITE (InsertCallback, and inlined copies such as a title's own vertex buffer pool): the
 // library pushes the function to 0x1D8C and its context to 0x1D90, then a NOP (0x100) whose value 6 asks
-// the console's interrupt handler to call function(context) once the GPU reaches it. Walk reaches it when
-// it reads the commands, so it queues the call; RunCallbacks makes it with a guest context.
+// the console's interrupt handler to call function(context) once the GPU reaches it. Walk queues the call
+// with a fence on the commands recorded so far; RunCallbacks makes it, with a guest context, only once
+// that fence passed: the render thread reads guest vertex memory when it executes a draw, and a pool
+// buffer handed back earlier would be refilled under a draw still waiting to read it.
+struct WriteCallback {
+    uint32_t fn, context, fence;
+};
 uint32_t g_cb_fn = 0, g_cb_ctx = 0;
-std::vector<std::pair<uint32_t, uint32_t>> g_callbacks;
+std::deque<WriteCallback> g_callbacks;
 
 uint32_t Dev(uint32_t off) { return R32(kDevice + off); }
 void SetDev(uint32_t off, uint32_t v) { W32(kDevice + off, v); }
@@ -656,14 +662,18 @@ HLE_STDCALL(D3D_KickOffAndWaitForIdle, 0) {
 }
 HLE_FASTCALL(CDevice_KickOff, 0) { return 0; }
 
-// runs the write callbacks Walk has passed, without the lock: a callback may call back into the library
+// runs the write callbacks whose commands the GPU has finished, oldest first, without the lock: a
+// callback may call back into the library. Fences only grow, so the finished ones are a prefix.
 static void RunCallbacks(X86Context& ctx) {
-    std::vector<std::pair<uint32_t, uint32_t>> calls;
+    std::vector<WriteCallback> calls;
     {
         std::lock_guard<std::recursive_mutex> lock(g_lock);
-        calls.swap(g_callbacks);
+        while (!g_callbacks.empty() && !(g_backend && g_backend->FencePending(g_callbacks.front().fence))) {
+            calls.push_back(g_callbacks.front());
+            g_callbacks.pop_front();
+        }
     }
-    for (auto [fn, context] : calls) CallGuest(ctx, fn, {context});
+    for (const WriteCallback& c : calls) CallGuest(ctx, c.fn, {c.context});
 }
 
 HLE_STDCALL(D3DDevice_MakeSpace, 0) {
@@ -1461,7 +1471,7 @@ void Walk(uint32_t end) {
                 (m == 0x1D8C ? g_cb_fn : g_cb_ctx) = v;
                 continue;
             } else if (m == 0x100 && v == 6 && g_cb_fn) {  // NOP raising the write callback
-                g_callbacks.emplace_back(g_cb_fn, g_cb_ctx);
+                g_callbacks.push_back({g_cb_fn, g_cb_ctx, g_backend ? g_backend->Fence() : 0});
                 g_cb_fn = 0;
                 continue;
             } else {

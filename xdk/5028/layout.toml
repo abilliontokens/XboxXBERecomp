@@ -55,8 +55,8 @@ Stream_Stride         = 0x0     # D3DDevice_SetStreamSource 0x198A00/0x198A0C us
 Stream_Buffer         = 0x8     # D3DDevice_SetStreamSource 0x1989D0/0x198A18 uses dword_1A5F48[stream*12 + 8] for the buffer (0x1A5F40 + 8)
 PixelShader_Definition = 0x8    # D3DDevice_SetPixelShader 0x19BB81 `mov edx,[eax+8]` reads the definition pointer from the shader object, then [edx+20h]/[edx+24h]/[edx+0D8h]
 # DSOUND
-CDirectSoundStream_Vtable  = 0x0  # the two-vtable DSOUND constructor sub_150982 stores the first vtable at [esi+0] (0x1509AB `mov dword ptr [esi], offset off_1D7D20`) and the second at [esi+4] (0x1509B1, off_1D7D14); both tables point into DSOUND code (0x15068A/0x150697 and 0x1509C6/0x15093E)
-CDirectSoundStream_Vtable2 = 0x4  # same constructor 0x1509B1 `mov dword ptr [esi+4], offset off_1D7D14` (second vtable), overwriting the [esi+4] slot set at 0x150988
+CDirectSoundStream_Vtable  = 0x0  # the CDirectSoundStream constructor 0x14B18E (identical to sibling 5558 0x29048D) stores the first vtable 0x1D7C18 at [esi+0] (0x14B1A7); slots 0-6 are AddRef..Flush. (sub_150982 / off_1D7D20, cited earlier, is another XMediaObject class)
+CDirectSoundStream_Vtable2 = 0x4  # same constructor 0x14B18E stores the second vtable 0x1D7C0C at [esi+4] (0x14B1A0)
 EffectsImage_Skip0    = 0x804   # the effects-image walker sub_14C3EE reads the dword count at [image+804h] (0x14C407 `add eax,[ebx+804h]`, 0x14C50D `sub ecx,[ebx+804h]`)
 EffectsImage_Skip1    = 0x80C   # the same walker reads the dword count at [image+80Ch] (0x14C401 `mov eax,[ebx+80Ch]`, 0x14C60C)
 EffectsImage_Desc     = 0x818   # the same walker forms the descriptor pointer at image + 0x818 + (Skip0 + Skip1) * 4 (0x14C410 lea esi,[ebx+eax*4+818h]; base loads at 0x14C468 and 0x14C62A)

@@ -734,7 +734,7 @@ KERNEL_EXPORT(200, NtFsControlFile, 10) {
 }
 
 KERNEL_EXPORT(196, NtDeviceIoControlFile, 10) {
-    uint32_t iosb = a[4], code = a[5], out = a[8], out_len = a[9];
+    uint32_t iosb = a[4], code = a[5], in = a[6], in_len = a[7], out = a[8], out_len = a[9];
     LOG_FIRST(16, "NtDeviceIoControlFile: code %08X", code);
     if (out && out_len) std::memset(HostPtr(out), 0, out_len);
     if (code == 0x70000 && out_len >= 0x18) {  // IOCTL_DISK_GET_DRIVE_GEOMETRY
@@ -743,6 +743,23 @@ KERNEL_EXPORT(196, NtDeviceIoControlFile, 10) {
         W32(out + 12, 255);
         W32(out + 16, 63);
         W32(out + 20, 512);
+    }
+    // IOCTL_SCSI_PASS_THROUGH_DIRECT: DataTransferLength +0xC, DataBuffer +0x14, Cdb +0x1C. XAPI's process
+    // init sends MODE SENSE(10) for the Xbox DVD authentication page 0x3E and, unless the reply after the
+    // 8 byte mode header says CDFValid (+0xB) on an authenticated partition (+0xA, +0xC), asks for the
+    // dashboard and skips mounting Z:, T: and U: (BMX XXX: no save drive, "not enough free blocks").
+    // The disc this runs from is the title's own: answer as an authenticated retail disc.
+    if (code == 0x4D014 && in && in_len >= 0x2C) {
+        uint32_t data = R32(in + 0x14), n = R32(in + 0xC);
+        if (G<uint8_t>(in + 0x1C) == 0x5A && (G<uint8_t>(in + 0x1E) & 0x3F) == 0x3E && data && n >= 0xD) {
+            std::memset(HostPtr(data), 0, n);
+            G<uint8_t>(data + 1) = uint8_t(n - 2);    // mode data length
+            G<uint8_t>(data + 8) = 0x3E;              // page code
+            G<uint8_t>(data + 9) = uint8_t(n - 10);   // page length
+            G<uint8_t>(data + 0xA) = 1;               // PartitionArea
+            G<uint8_t>(data + 0xB) = 1;               // CDFValid
+            G<uint8_t>(data + 0xC) = 1;               // Authentication
+        }
     }
     IoStatus(iosb, kSuccess, out_len);
     return kSuccess;
