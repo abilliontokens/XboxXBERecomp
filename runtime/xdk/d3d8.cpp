@@ -1408,7 +1408,16 @@ void EndPrimitive() {
 
 // reads the commands pushed since the last call: vertex data between a begin and an end is drawn, the rest is skipped
 void Walk(uint32_t end) {
-    if (!g_walk || end < g_walk || end > g_scratch_push + g_scratch_size) return;
+    // An end marker draws through EndPrimitive -> DrawUp, which walks again for state pushed before a
+    // draw. Inside a walk that state was already read in order, and what follows the marker belongs to
+    // later draws: a nested walk would read it ahead, then the outer loop again, drawing every later
+    // primitive once per nesting level (BMX XXX levels: ~1M draws a frame at 0.1 fps).
+    static bool walking = false;
+    if (walking || !g_walk || end < g_walk || end > g_scratch_push + g_scratch_size) return;
+    walking = true;
+    struct Done {
+        ~Done() { walking = false; }
+    } done;
     for (uint32_t p = g_walk; p + 4 <= end;) {
         // vertex shader constants pushed inline (the library's Constant1Fast and the
         // engine's own writer at 0x1DF070): [0x41EA4, register + 96, (dwords << 18) | 0xB80, data...].
