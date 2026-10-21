@@ -2,6 +2,8 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <ctime>
 
 #include "app/app.h"
@@ -132,6 +134,39 @@ KERNEL_EXPORT(291, RtlInitializeCriticalSection, 1) {
     return 0;
 }
 
+// Bounded spin before a contended critical section parks in the dispatcher.
+//
+// RtlEnterCriticalSection used to go straight from "someone else holds it" to Wait(), which
+// takes the global dispatcher mutex and sleeps on the global condition variable. Every brief
+// hand-off therefore cost a sleep/wake pair, and because SetEvent notifies *all* dispatcher
+// waiters, each wake also drags every other waiting guest thread through g_dispatch to
+// re-check and park again. Titles that take a short lock around per-object work pay that
+// thousands of times a frame; the title thread measured ~1890 voluntary context switches per
+// frame, roughly one per submitted draw, while the render thread never waited at all.
+//
+// The spin only ever retries the *uncontended* acquire: the compare-exchange below moves
+// LockCount from -1 (free) to 0 (held by one thread), which is exactly what the
+// __atomic_add_fetch fast path does. It cannot take a section someone else owns, it never
+// touches LockCount otherwise, and on failure it falls through to the original code path
+// unchanged - so no lock invariant moves and a spin that never succeeds costs only the spin.
+//
+// XBE_CS_SPIN sets the iteration count (0 restores the old behaviour exactly);
+// XBE_NO_CS_SPIN=1 disables it outright for an A/B without a rebuild.
+static int CsSpinCount() {
+    static const int n = [] {
+        if (const char* off = std::getenv("XBE_NO_CS_SPIN"); off && off[0] && std::strcmp(off, "0") != 0) return 0;
+        if (const char* v = std::getenv("XBE_CS_SPIN"); v && v[0]) return std::max(0, atoi(v));
+        return 400;  // ~a few hundred ns on this class of core, far below a sleep/wake pair
+    }();
+    return n;
+}
+
+static inline void CpuRelax() {
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+    __builtin_ia32_pause();
+#endif
+}
+
 KERNEL_EXPORT(277, RtlEnterCriticalSection, 1) {
     uint32_t cs = a[0];
     uint32_t me = Current()->ethread;
@@ -144,6 +179,31 @@ KERNEL_EXPORT(277, RtlEnterCriticalSection, 1) {
     if (R32(cs + 0x18) == me) {
         W32(cs + 0x14, R32(cs + 0x14) + 1);
         return 0;
+    }
+    // Contended by another thread. Give up our claim and retry the free->held acquire for a
+    // bounded spin before parking: a section held for a few hundred nanoseconds is far cheaper
+    // to wait out here than through the dispatcher. Backing the claim out is safe only in this
+    // order - decrement first, then re-CAS from free - because LeaveCriticalSection signals the
+    // event when its own decrement leaves LockCount >= 0, i.e. when a claim is still outstanding.
+    // Dropping ours before it leaves can only turn a signal into no signal, never the reverse,
+    // and if it already signalled we take the event on the Wait below exactly as before.
+    if (int spin = CsSpinCount(); spin > 0) {
+        __atomic_sub_fetch(lock_count, 1, __ATOMIC_SEQ_CST);
+        for (int i = 0; i < spin; ++i) {
+            int32_t idle = -1;
+            if (__atomic_compare_exchange_n(lock_count, &idle, 0, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+                W32(cs + 0x18, me);
+                W32(cs + 0x14, 1);
+                return 0;
+            }
+            CpuRelax();
+        }
+        // the spin lost: take a claim again and park, as the original code did
+        if (__atomic_add_fetch(lock_count, 1, __ATOMIC_SEQ_CST) == 0) {
+            W32(cs + 0x18, me);
+            W32(cs + 0x14, 1);
+            return 0;
+        }
     }
     ObjectRef ev = FromPointer(cs);
     Wait({ev}, false, INT64_MAX, false);
