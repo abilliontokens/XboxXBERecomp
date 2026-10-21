@@ -1348,6 +1348,13 @@ void Walk(uint32_t end) {
                     g_im_mask = 0;
                     g_im_vertices.clear();
                 } else {
+                    // consume through this end marker first: EndPrimitive flushes via DrawUp,
+                    // which re-enters Walk for the constants pushed after it; without advancing
+                    // g_walk that nested Walk rescans the same begin/end pair, re-fires the begin
+                    // (so the flush's own early-out never holds) and recurses without bound.
+                    // Seen as an operator-new crash at unbounded depth on BMX XXX (XDK 5028),
+                    // the first title to push a whole begin/end immediate-mode span at once.
+                    g_walk = p + 4;
                     EndPrimitive();
                 }
                 continue;
