@@ -93,8 +93,9 @@ std::string CodeGen::EmitFunction(uint32_t entry) {
                 Line(F("\tx86_trap(ctx, 0x%X, \"fell off decoded code\");", next));
         }
     }
-    // a function that registers an SEH frame (mov fs:[0], ...) may be where a C++ catch resumes: the CRT's jump to
-    // the continuation throws X86Resume, caught by the innermost such frame whose stack holds the resume esp
+    // a function that registers an SEH frame (mov fs:[0], ...) may be where a C++ catch resumes, and one that calls
+    // _setjmp is where its longjmp resumes: the jump to the continuation throws X86Resume, caught by the innermost
+    // such frame whose stack holds the resume esp
     bool seh = false;
     for (uint32_t va : body) {
         ZydisDecodedInstruction in;
@@ -103,6 +104,8 @@ std::string CodeGen::EmitFunction(uint32_t entry) {
             ops[0].mem.segment == ZYDIS_REGISTER_FS && ops[0].mem.base == ZYDIS_REGISTER_NONE &&
             ops[0].mem.index == ZYDIS_REGISTER_NONE && ops[0].mem.disp.value == 0)
             seh = true;
+        const Insn* call = an_.InsnAt(va);
+        if (call && call->flow == Flow::Call && an_.cfg.setjmp.count(call->target)) seh = true;
     }
     std::string out;
     out += F("X86_FUNC(__imp__%s) {\n", FuncName(entry).c_str());

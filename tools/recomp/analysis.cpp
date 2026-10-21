@@ -530,6 +530,7 @@ void Analysis::Run() {
         }
     }
     EhContinuations();
+    SetjmpContinuations();
     // every direct call from decoded code names a function
     for (bool changed = true; changed;) {
         changed = false;
@@ -618,6 +619,21 @@ void Analysis::EhContinuations() {
         }
     }
     std::fprintf(stderr, "c++ eh: %zu catch blocks, %zu continuations\n", catches, continuations.size());
+}
+
+// _setjmp returns twice: once normally, then again from longjmp, whose "jmp [jmp_buf + 0x14]" lands on the
+// instruction after the call. That address is a continuation like a C++ catch's: the jump throws X86Resume and
+// the caller of _setjmp (codegen gives it the catch frame) resumes there with the longjmp's esp.
+void Analysis::SetjmpContinuations() {
+    if (cfg.setjmp.empty()) return;
+    std::vector<uint32_t> sites;
+    for (auto& [va, insn] : insns_)
+        if (insn.flow == Flow::Call && cfg.setjmp.count(insn.target)) sites.push_back(va + insn.len);
+    for (uint32_t c : sites) {
+        MakeFunction(c);
+        if (functions.count(c)) continuations.insert(c);
+    }
+    std::fprintf(stderr, "setjmp: %zu continuations\n", sites.size());
 }
 
 std::vector<uint32_t> Analysis::Body(uint32_t entry) const {
