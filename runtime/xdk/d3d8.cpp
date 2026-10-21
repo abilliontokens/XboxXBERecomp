@@ -1388,7 +1388,7 @@ void Walk(uint32_t end) {
             if (a == g_im_attr && last) g_im_vertices.insert(g_im_vertices.end(), g_im_attr, g_im_attr + 64);
         }
     }
-    g_walk = end;
+    if (end > g_walk) g_walk = end;  // monotonic: a nested flush-Walk may already have advanced past this end
 }
 }  // namespace
 }  // namespace d3d
