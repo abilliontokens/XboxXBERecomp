@@ -75,6 +75,7 @@ enum : uint32_t {
 // Simple render states reach the API as (method, value) pairs; the method is the key the XDK's own
 // D3DSIMPLERENDERSTATEENCODE table assigns to each state.
 enum : uint32_t {
+    kMDepthTestEnable = 0x30C,  // NV097_SET_DEPTH_TEST_ENABLE; the 5028 ZEnable setter pushes this
     kMAlphaTestEnable = 0x300,
     kMBlendEnable = 0x304,
     kMDitherEnable = 0x310,

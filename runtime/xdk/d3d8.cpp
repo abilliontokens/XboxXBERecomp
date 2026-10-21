@@ -858,10 +858,19 @@ HLE_STDCALL(D3DDevice_SetScreenSpaceOffset, 2) {
 }
 
 // render states
+// A simple render state as a pushed method. The depth test arrives this way too (the complex-state
+// setters of LTCG builds push NV2A methods instead of calling in), and the pipeline keys read it
+// from rs[kRsZEnable], so it is mirrored there. Without the mirror every draw depth-tested nothing
+// and later draws painted over earlier ones wherever they overlapped (BMX XXX: the bike through
+// the rider's clothes, decals through walls - the see-through textures).
+void StoreSimple(uint32_t method, uint32_t value) {
+    Set(g_state.simple[method >> 2], value);
+    if (method == gpu::kMDepthTestEnable) Set(g_state.rs[gpu::kRsZEnable], value ? 1u : 0u);
+}
 
 HLE_FASTCALL(D3DDevice_SetRenderState_Simple, 0) {
     uint32_t method = a[0] & 0x1FFC, value = a[1];
-    Set(g_state.simple[method >> 2], value);
+    StoreSimple(method, value);
     return 0;
 }
 
@@ -869,7 +878,7 @@ HLE_STDCALL(D3DDevice_SetRenderStateNotInline, 2) {
     uint32_t rs = a[0], v = a[1];
     if (rs < gpu::kRsDeferredFirst) {
         uint32_t method = R32(kSimpleEncode + rs * 4) & 0x1FFC;
-        Set(g_state.simple[method >> 2], v);
+        StoreSimple(method, v);
         W32(kRenderState + rs * 4, v);  // titles read their states back from the library's table
     } else if (rs < gpu::kRsMax) {
         SetComplex(rs, v);
@@ -1487,7 +1496,7 @@ void Walk(uint32_t end) {
                 // any other method is a simple state, as SetRenderState_Simple and EndPush store it: the
                 // library's inlined render state setters and D3D_InitDefaultState reach the device this way
                 // (BMX XXX: the default colour write mask, so every target stayed black without it)
-                Set(g_state.simple[m >> 2], v);
+                StoreSimple(m, v);
                 continue;
             }
             if (!g_im_prim) continue;
@@ -1543,7 +1552,7 @@ HLE_STDCALL(D3DDevice_EndPush, 1) {
             if (m == kInlineArray) {
                 if (prim) vertices.push_back(v);
             } else if (m != kBeginEnd) {
-                if (m >> 2 < g_state.simple.size()) Set(g_state.simple[m >> 2], v);
+                if (m >> 2 < g_state.simple.size()) StoreSimple(m, v);
             } else if (v) {
                 prim = v;
                 vertices.clear();
