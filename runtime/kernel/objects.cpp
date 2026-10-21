@@ -1,7 +1,10 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <map>
+#include <optional>
 #include <queue>
 
 #include "kernel/kernel.h"
@@ -11,7 +14,59 @@ namespace kernel {
 namespace {
 
 std::mutex g_dispatch;
-std::condition_variable g_cv;
+std::condition_variable g_cv;  // kept for the fallback broadcast below
+
+}  // namespace
+
+// Targeted wakeups.
+//
+// Every dispatcher wait used to sleep on one process-wide condition variable, and every signal
+// woke all of them with notify_all. With several guest threads parked on different objects, one
+// release cost a wake, a g_dispatch acquire and a re-test on every other thread, which then
+// parked again. Measured on The Sims: a guest lock built on a semaphore
+// (NtWaitForSingleObjectEx / NtReleaseSemaphore) kept four worker threads and the title thread
+// cycling through that herd - the title thread was blocked ~15% of samples inside kernel::Wait,
+// with g_dispatch and g_cv the top two futexes, and ~1890 voluntary context switches a frame.
+//
+// Each waiting thread now parks on its own condition variable and registers itself on the
+// objects it waits for, so a signal wakes only threads that object can satisfy. The dispatcher
+// lock still serialises every state change, so a waiter list is only ever touched under the
+// same mutex the signal walks it under, and a waiter is always removed before its frame dies.
+//
+// XBE_NO_TARGETED_WAKE=1 makes every wake notify every registered waiter, which is what the
+// single condition variable did before.
+struct Waiter {
+    std::condition_variable cv;
+};
+
+namespace {
+
+// Every thread currently parked in WaitFor. Guarded by its own mutex rather than the dispatcher
+// lock, because QueueApc wakes waiters while holding a thread's apc_lock, and WaitFor takes
+// apc_lock *under* the dispatcher lock - taking the dispatcher lock there would invert that
+// order. Lock order is dispatcher -> apc_lock -> waiters, and nothing acquires in reverse.
+std::mutex g_waiters_lock;
+std::vector<Waiter*> g_waiters;
+
+bool TargetedWake() {
+    static const bool on = [] {
+        const char* v = std::getenv("XBE_NO_TARGETED_WAKE");
+        return !(v && v[0] && std::strcmp(v, "0") != 0);
+    }();
+    return on;
+}
+
+// wake every parked thread; the dispatcher lock is held by the caller
+void WakeAll() {
+    std::lock_guard<std::mutex> lock(g_waiters_lock);
+    for (Waiter* w : g_waiters) w->cv.notify_one();
+}
+
+// wake only the threads parked on this object; the dispatcher lock is held by the caller
+void WakeObject(Object& o) {
+    if (!TargetedWake()) return WakeAll();
+    for (Waiter* w : o.waiters) w->cv.notify_one();
+}
 
 std::mutex g_handles_lock;
 std::unordered_map<uint32_t, ObjectRef> g_handles;
@@ -32,7 +87,10 @@ std::unordered_map<std::string, std::weak_ptr<Object>> g_names;
 }  // namespace
 
 std::mutex& DispatchLock() { return g_dispatch; }
-void SignalChanged() { g_cv.notify_all(); }
+// Not attributable to one object (thread teardown, queued APC, completion packet): wake every
+// parked thread so each re-tests its own objects. Callers may or may not hold the dispatcher
+// lock - MarkExited and PushPacket do, QueueApc does not - so this must not take it.
+void SignalChanged() { WakeAll(); }
 
 uint32_t NewHandle(ObjectRef obj) {
     std::lock_guard<std::mutex> lock(g_handles_lock);
@@ -214,6 +272,33 @@ int64_t ToDeadline(int64_t due) {
     return AddSpan100(now, due - Now100ns());
 }
 
+// Registers a waiter on the global list and on every object it is waiting for, and takes it off
+// again however the wait ends - satisfied, timed out, alerted or thrown. The dispatcher lock is
+// held for the whole lifetime, which is what makes the lists safe to walk from a signal.
+namespace {
+struct Registration {
+    Waiter& w;
+    const std::vector<ObjectRef>& objs;
+    Registration(Waiter& waiter, const std::vector<ObjectRef>& o) : w(waiter), objs(o) {
+        {
+            std::lock_guard<std::mutex> wl(g_waiters_lock);
+            g_waiters.push_back(&w);
+        }
+        for (const ObjectRef& o2 : objs)
+            if (o2) o2->waiters.push_back(&w);
+    }
+    ~Registration() {
+        for (const ObjectRef& o2 : objs) {
+            if (!o2) continue;
+            auto& v = o2->waiters;
+            v.erase(std::remove(v.begin(), v.end(), &w), v.end());
+        }
+        std::lock_guard<std::mutex> wl(g_waiters_lock);
+        g_waiters.erase(std::remove(g_waiters.begin(), g_waiters.end(), &w), g_waiters.end());
+    }
+};
+}  // namespace
+
 static uint32_t WaitFor(const std::vector<ObjectRef>& objs, bool wait_all, int64_t timeout, bool alertable) {
     using namespace std::chrono;
     Thread* self = Current();
@@ -221,6 +306,14 @@ static uint32_t WaitFor(const std::vector<ObjectRef>& objs, bool wait_all, int64
     bool infinite = timeout == INT64_MAX;
     int64_t deadline = infinite ? 0 : ToDeadline(timeout);
     std::unique_lock<std::mutex> lock(g_dispatch);
+    Waiter self_waiter;
+    // std::optional so the registration can be ended explicitly, while the dispatcher lock is
+    // still held, on the one path that releases the lock before returning (the alertable APC
+    // branch below). Letting the destructor run after that unlock would erase this waiter from
+    // every object's list without the lock, while another thread may be walking the same vector
+    // inside WakeObject - an iterator invalidation and a use-after-free on a live reference.
+    std::optional<Registration> registered;
+    registered.emplace(self_waiter, objs);
     for (;;) {
         if (wait_all) {
             bool all = std::all_of(objs.begin(), objs.end(), [&](const ObjectRef& o) { return o && Satisfied(*o, me); });
@@ -242,6 +335,7 @@ static uint32_t WaitFor(const std::vector<ObjectRef>& objs, bool wait_all, int64
                 pending = !self->apcs.empty();
             }
             if (pending) {
+                registered.reset();  // deregister under the lock, before releasing it
                 lock.unlock();
                 RunApcs(*self);
                 return kUserApc;
@@ -251,9 +345,9 @@ static uint32_t WaitFor(const std::vector<ObjectRef>& objs, bool wait_all, int64
             int64_t now = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
             if (now >= deadline) return kTimeout;
             // bounded so alertable waits notice new APCs
-            g_cv.wait_for(lock, nanoseconds(std::min<int64_t>(deadline - now, 50000000)));
+            self_waiter.cv.wait_for(lock, nanoseconds(std::min<int64_t>(deadline - now, 50000000)));
         } else {
-            g_cv.wait_for(lock, milliseconds(50));
+            self_waiter.cv.wait_for(lock, milliseconds(50));
         }
     }
 }
@@ -269,7 +363,14 @@ int32_t SetEvent(Object& o) {
     std::lock_guard<std::mutex> lock(g_dispatch);
     int32_t old = o.signal;
     SetSignal(o, 1);
-    g_cv.notify_all();
+    // g_cv is one condition variable for every dispatcher object, so notify_all wakes every
+    // waiting guest thread, each of which retakes g_dispatch, re-tests its own object and
+    // usually parks again. Setting an event that is already set changes no object's signal,
+    // so no waiter's Satisfied() answer can change and the wake is pure overhead: a thread
+    // can only be parked here if its object was unsatisfied when it took the lock, and this
+    // call leaves every signal exactly as it found it. Skipping that wake is therefore
+    // invisible to the guest and removes a storm titles generate by re-setting live events.
+    if (old != o.signal) WakeObject(o);
     return old;
 }
 
@@ -285,7 +386,7 @@ int32_t PulseEvent(Object& o) {
     std::lock_guard<std::mutex> lock(g_dispatch);
     int32_t old = o.signal;
     SetSignal(o, 1);
-    g_cv.notify_all();
+    WakeObject(o);
     return old;
 }
 
@@ -298,7 +399,7 @@ int32_t ReleaseSemaphore(Object& o, int32_t count, uint32_t& status) {
     }
     SetSignal(o, old + count);
     status = kSuccess;
-    g_cv.notify_all();
+    WakeObject(o);
     return old;
 }
 
@@ -313,7 +414,7 @@ int32_t ReleaseMutant(Object& o, uint32_t& status) {
     if (--o.recursion == 0) {
         o.owner = 0;
         SetSignal(o, 1);
-        g_cv.notify_all();
+        WakeObject(o);
     }
     status = kSuccess;
     return old;
@@ -397,7 +498,7 @@ static void TimerLoop() {
         {
             std::lock_guard<std::mutex> dl(g_dispatch);
             SetSignal(*e.timer, 1);
-            g_cv.notify_all();
+            WakeObject(*e.timer);
         }
         if (e.dpc) QueueDpc(e.dpc, uint32_t(Now100ns()), uint32_t(Now100ns() >> 32));
         if (auto t = e.apc_thread.lock(); t && e.apc_routine)

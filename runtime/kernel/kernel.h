@@ -113,6 +113,10 @@ struct Object {
     uint32_t owner = 0;         // mutant owner thread
     uint32_t recursion = 0;
     std::string name;
+    // Threads currently parked on this object, protected by the dispatcher lock. A signal walks
+    // this list and wakes only the threads the change can satisfy, instead of broadcasting to
+    // every waiter in the process (kernel/objects.cpp).
+    std::vector<struct Waiter*> waiters;
     explicit Object(ObjType t) : type(t) {}
     virtual ~Object() = default;
 };
