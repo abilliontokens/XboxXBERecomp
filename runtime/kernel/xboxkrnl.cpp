@@ -1029,6 +1029,8 @@ uint32_t CallHandler(X86Context& ctx, uint32_t rec, uint32_t frame, uint32_t scr
 
 KERNEL_EXPORT(302, RtlRaiseException, 1) {
     uint32_t rec = a[0];
+    LOGI("RtlRaiseException: code %08X address %08X (first chance; handled unwinds are silent without this)",
+         R32(rec), R32(rec + 12));
     std::string text;
     // a C++ throw carrying a wide string: the text
     if (R32(rec) == 0xE06D7363 && R32(rec + 16) >= 2 && mem::IsCommitted(R32(rec + 24))) {
