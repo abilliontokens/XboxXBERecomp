@@ -132,6 +132,12 @@ uint32_t g_depth = 0;
 uint32_t g_frame_w = 640, g_frame_h = 480;  // the console's frame, what the title asked CreateDevice for
 uint32_t g_scratch_push = 0, g_scratch_size = 0;
 uint32_t g_walk = 0;  // first scratch command not read yet
+// D3DCALLBACK_WRITE (InsertCallback, and inlined copies such as a title's own vertex buffer pool): the
+// library pushes the function to 0x1D8C and its context to 0x1D90, then a NOP (0x100) whose value 6 asks
+// the console's interrupt handler to call function(context) once the GPU reaches it. Walk reaches it when
+// it reads the commands, so it queues the call; RunCallbacks makes it with a guest context.
+uint32_t g_cb_fn = 0, g_cb_ctx = 0;
+std::vector<std::pair<uint32_t, uint32_t>> g_callbacks;
 
 uint32_t Dev(uint32_t off) { return R32(kDevice + off); }
 void SetDev(uint32_t off, uint32_t v) { W32(kDevice + off, v); }
@@ -650,15 +656,35 @@ HLE_STDCALL(D3D_KickOffAndWaitForIdle, 0) {
 }
 HLE_FASTCALL(CDevice_KickOff, 0) { return 0; }
 
+// runs the write callbacks Walk has passed, without the lock: a callback may call back into the library
+static void RunCallbacks(X86Context& ctx) {
+    std::vector<std::pair<uint32_t, uint32_t>> calls;
+    {
+        std::lock_guard<std::recursive_mutex> lock(g_lock);
+        calls.swap(g_callbacks);
+    }
+    for (auto [fn, context] : calls) CallGuest(ctx, fn, {context});
+}
+
 HLE_STDCALL(D3DDevice_MakeSpace, 0) {
     LOG_FIRST(16, "d3d: MakeSpace from %08X, some caller still pushes hardware commands", R32(ctx.esp));
-    std::lock_guard<std::recursive_mutex> lock(g_lock);
-    return ScratchPush();
+    uint32_t r;
+    {
+        std::lock_guard<std::recursive_mutex> lock(g_lock);
+        r = ScratchPush();
+    }
+    RunCallbacks(ctx);
+    return r;
 }
 HLE_STDCALL(D3D_MakeRequestedSpace, 2) {
     LOG_FIRST(16, "d3d: MakeRequestedSpace from %08X", R32(ctx.esp));
-    std::lock_guard<std::recursive_mutex> lock(g_lock);
-    return ScratchPush();
+    uint32_t r;
+    {
+        std::lock_guard<std::recursive_mutex> lock(g_lock);
+        r = ScratchPush();
+    }
+    RunCallbacks(ctx);
+    return r;
 }
 
 HLE_STDCALL(D3DDevice_BlockUntilVerticalBlank, 0) {
@@ -737,6 +763,11 @@ std::atomic<uint32_t> g_presents{0};
 
 HLE_STDCALL(D3DDevice_Swap, 1) {
     app::SplashFirstFrame();
+    {
+        std::lock_guard<std::recursive_mutex> lock(g_lock);
+        Walk(Dev(kDevPush));  // the frame's commands, and the callbacks among them
+    }
+    RunCallbacks(ctx);
     // handed over from the previous instance: the window opens on the second frame, the first picture with
     // anything drawn over it right after
     if (app::HandingOver() && g_presents >= 2) {
@@ -1378,6 +1409,13 @@ void Walk(uint32_t end) {
             } else if (m >= 0x1518 && m < 0x1528) {  // position, 4 floats
                 last = m == 0x1524;
                 a[(m - 0x1518) / 4] = f;
+            } else if (m == 0x1D8C || m == 0x1D90) {  // write callback function, context
+                (m == 0x1D8C ? g_cb_fn : g_cb_ctx) = v;
+                continue;
+            } else if (m == 0x100 && v == 6 && g_cb_fn) {  // NOP raising the write callback
+                g_callbacks.emplace_back(g_cb_fn, g_cb_ctx);
+                g_cb_fn = 0;
+                continue;
             } else {
                 static std::unordered_set<uint32_t> seen;
                 if (seen.insert(m).second) LOGI("d3d: Walk drops method %04X (head %08X, %u values)", m, head, n);
