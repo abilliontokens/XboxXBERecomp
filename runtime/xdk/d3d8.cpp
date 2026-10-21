@@ -1060,12 +1060,22 @@ HLE_STDCALL(D3DDevice_CreateVertexShader, 4) {
     return 0;
 }
 
+namespace {
+// transform program memory: the shader whose program LoadVertexShader put at each address, and the
+// shaders SelectVertexShader made from one shader's declaration and another's program
+std::unordered_map<uint32_t, uint32_t> g_vp_at;
+std::map<std::pair<uint32_t, uint32_t>, std::shared_ptr<gpu::VertexShader>> g_vs_mixed;
+}  // namespace
+
 HLE_STDCALL(D3DDevice_DeleteVertexShader, 1) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     auto it = g_vs.find(a[0]);
     if (it != g_vs.end()) {
         mem::FreeSystem(a[0] & ~1u);
         g_vs.erase(it);
+        // the record's address comes back for the next shader
+        std::erase_if(g_vp_at, [&](const auto& e) { return e.second == a[0]; });
+        std::erase_if(g_vs_mixed, [&](const auto& e) { return e.first.first == a[0] || e.first.second == a[0]; });
     }
     return 0;
 }
@@ -1084,24 +1094,35 @@ HLE_STDCALL(D3DDevice_GetVertexShaderFunction, 3) {
     return 0;
 }
 
+namespace {
+// a programmable shader becomes current; constants declared with it load when it is selected
+void UseVertexShader(uint32_t h, const std::shared_ptr<gpu::VertexShader>& vs) {
+    Set(g_state.vs_handle, h);
+    Set(g_state.vs, vs);
+    for (auto& [reg, v] : vs->constants)
+        if (reg < kVscCount) {
+            Set(g_state.vsc[reg], v);
+            CentreVsConstant(reg);
+        }
+}
+}  // namespace
+
 HLE_STDCALL(D3DDevice_SetVertexShader, 1) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     uint32_t h = a[0];
-    Set(g_state.vs_handle, h);
-    Set(g_state.vs, nullptr);
-    if (h & 1) {
-        auto it = g_vs.find(h);
-        if (it != g_vs.end()) {
-            Set(g_state.vs, it->second);
-            // constants declared with the shader load when it is selected
-            for (auto& [reg, v] : it->second->constants)
-                if (reg < kVscCount) {
-                    Set(g_state.vsc[reg], v);
-                    CentreVsConstant(reg);
-                }
-        } else {
-            LOG_FIRST(8, "d3d: SetVertexShader with unknown handle %08X", h);
-        }
+    if (!(h & 1)) {
+        Set(g_state.vs_handle, h);
+        Set(g_state.vs, nullptr);
+        return 0;
+    }
+    auto it = g_vs.find(h);
+    if (it != g_vs.end()) {
+        g_vp_at[0] = h;  // the library loads the program at address 0 and selects it
+        UseVertexShader(h, it->second);
+    } else {
+        Set(g_state.vs_handle, h);
+        Set(g_state.vs, nullptr);
+        LOG_FIRST(8, "d3d: SetVertexShader with unknown handle %08X", h);
     }
     return 0;
 }
@@ -1145,12 +1166,39 @@ HLE_FASTCALL(D3DDevice_SetVertexShaderConstantNotInlineFast, 1) {
     return 0;
 }
 
+// (handle, address): the shader's program goes to transform program memory at the address, 136 slots
 HLE_STDCALL(D3DDevice_LoadVertexShader, 2) {
-    LOG_FIRST(4, "d3d: LoadVertexShader %08X at %u is not supported", a[0], a[1]);
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    if (g_vs.count(a[0])) g_vp_at[a[1]] = a[0];
+    else LOG_FIRST(8, "d3d: LoadVertexShader with unknown handle %08X", a[0]);
     return 0;
 }
+// (handle, address): the handle's declaration runs the program loaded at the address; handle 0 keeps the
+// current declaration. Titles that manage program memory themselves (BMX XXX's UI) load several shaders
+// and switch between them with this alone, never calling SetVertexShader.
 HLE_STDCALL(D3DDevice_SelectVertexShader, 2) {
-    LOG_FIRST(4, "d3d: SelectVertexShader %08X at %u is not supported", a[0], a[1]);
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    uint32_t h = a[0] ? a[0] : g_state.vs_handle;
+    auto decl = g_vs.find(h);
+    if (decl == g_vs.end()) {
+        LOG_FIRST(8, "d3d: SelectVertexShader with unknown handle %08X at %u", h, a[1]);
+        return 0;
+    }
+    auto at = g_vp_at.find(a[1]);
+    uint32_t p = at != g_vp_at.end() ? at->second : h;
+    if (p == h) {
+        UseVertexShader(h, decl->second);
+        return 0;
+    }
+    auto& mixed = g_vs_mixed[{h, p}];
+    if (!mixed) {
+        const gpu::VertexShader& prog = *g_vs.at(p);
+        mixed = std::make_shared<gpu::VertexShader>(*decl->second);
+        mixed->program = prog.program;
+        mixed->program_type = prog.program_type;
+        mixed->hash = 0;
+    }
+    UseVertexShader(h, mixed);
     return 0;
 }
 HLE_STDCALL(D3DDevice_SetShaderConstantMode, 1) {
@@ -1417,8 +1465,10 @@ void Walk(uint32_t end) {
                 g_cb_fn = 0;
                 continue;
             } else {
-                static std::unordered_set<uint32_t> seen;
-                if (seen.insert(m).second) LOGI("d3d: Walk drops method %04X (head %08X, %u values)", m, head, n);
+                // any other method is a simple state, as SetRenderState_Simple and EndPush store it: the
+                // library's inlined render state setters and D3D_InitDefaultState reach the device this way
+                // (BMX XXX: the default colour write mask, so every target stayed black without it)
+                Set(g_state.simple[m >> 2], v);
                 continue;
             }
             if (!g_im_prim) continue;
